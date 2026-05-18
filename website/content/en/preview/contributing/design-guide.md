@@ -8,6 +8,8 @@ description: >
 
 Technical designs are essential to building robust, intuitive, and performant products that delight users. Writing a design can accelerate decision making and avoid wasting time on an implementation that never lands. But what makes a good design? These guidelines were authored with the Karpenter community in mind, but apply broadly to the development of Kubernetes Operators.
 
+For the full feature contribution process, see the [Feature Lifecycle](https://github.com/kubernetes-sigs/karpenter/blob/main/FEATURE_LIFECYCLE.md).
+
 Designs don’t have to be long or formal, and should match the scope of the problem they’re trying to solve.
 
 * Are there multiple potential solutions?
@@ -83,3 +85,7 @@ Users have high expectations for performance on Kubernetes. Karpenter is especia
 * Beware code that scales linearly with pods or nodes. Milliseconds in testing turn into seconds at scale.
 * Cloud provider read APIs can have surprisingly high latency and low limits, use caching to minimize calls.
 * Increases to memory and CPU usage increase capex cost for operators. Profile and optimize your implementations.
+
+## Ready to Write?
+
+When you're ready to write your design, use the [RFC template](https://github.com/kubernetes-sigs/karpenter/blob/main/designs/rfc-template.md).
