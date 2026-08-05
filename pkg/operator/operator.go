@@ -37,7 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"github.com/aws/smithy-go"
-	"github.com/patrickmn/go-cache"
+	"github.com/awslabs/operatorpkg/cache"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -154,19 +154,19 @@ func NewOperator(ctx context.Context, operator *operator.Operator) (context.Cont
 		zsProvider = zonalshiftprovider.NewNoopProvider()
 	}
 	unavailableOfferingsCache := awscache.NewUnavailableOfferings()
-	ssmCache := cache.New(awscache.SSMCacheTTL, awscache.DefaultCleanupInterval)
-	validationCache := cache.New(awscache.ValidationTTL, awscache.DefaultCleanupInterval)
-	recreationCache := cache.New(awscache.RecreationTTL, awscache.DefaultCleanupInterval)
+	ssmCache := cache.New("ssm", awscache.SSMCacheTTL, awscache.DefaultCleanupInterval)
+	validationCache := cache.New("nodeclass.validation", awscache.ValidationTTL, awscache.DefaultCleanupInterval)
+	recreationCache := cache.New("instanceprofile.recreation", awscache.RecreationTTL, awscache.DefaultCleanupInterval)
 
 	subnetRefreshInterval := options.FromContext(ctx).SubnetRefreshInterval
 	subnetIPCacheTTL := max(awscache.AvailableIPAddressTTL, subnetRefreshInterval+(awscache.AvailableIPAddressTTL-awscache.DefaultTTL))
-	subnetProvider := subnet.NewDefaultProvider(ec2api, cache.New(subnetRefreshInterval, awscache.DefaultCleanupInterval), cache.New(subnetIPCacheTTL, awscache.DefaultCleanupInterval))
-	securityGroupProvider := securitygroup.NewDefaultProvider(ec2api, cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval))
+	subnetProvider := subnet.NewDefaultProvider(ec2api, cache.New("subnet", subnetRefreshInterval, awscache.DefaultCleanupInterval), cache.New("subnet.availableip", subnetIPCacheTTL, awscache.DefaultCleanupInterval))
+	securityGroupProvider := securitygroup.NewDefaultProvider(ec2api, cache.New("securitygroup", awscache.DefaultTTL, awscache.DefaultCleanupInterval))
 	instanceProfileProvider := instanceprofile.NewDefaultProvider(
 		iam.NewFromConfig(cfg),
-		cache.New(awscache.InstanceProfileTTL, awscache.DefaultCleanupInterval),
-		cache.New(awscache.DefaultCleanupInterval, awscache.DefaultCleanupInterval),
-		cache.New(awscache.ProtectedProfilesTTL, awscache.DefaultCleanupInterval),
+		cache.New("instanceprofile", awscache.InstanceProfileTTL, awscache.DefaultCleanupInterval),
+		cache.New("instanceprofile.role", awscache.DefaultCleanupInterval, awscache.DefaultCleanupInterval),
+		cache.New("instanceprofile.protected", awscache.ProtectedProfilesTTL, awscache.DefaultCleanupInterval),
 		cfg.Region,
 	)
 	pricingProvider := pricing.NewDefaultProvider(
@@ -181,17 +181,17 @@ func NewOperator(ctx context.Context, operator *operator.Operator) (context.Cont
 	// the previously resolved value will be used.
 	lo.Must0(versionProvider.UpdateVersion(ctx))
 	ssmProvider := ssmp.NewDefaultProvider(ssm.NewFromConfig(cfg), ssmCache)
-	amiProvider := amifamily.NewDefaultProvider(operator.Clock, versionProvider, ssmProvider, ec2api, cache.New(options.FromContext(ctx).AMIRefreshInterval, awscache.DefaultCleanupInterval))
+	amiProvider := amifamily.NewDefaultProvider(operator.Clock, versionProvider, ssmProvider, ec2api, cache.New("ami", options.FromContext(ctx).AMIRefreshInterval, awscache.DefaultCleanupInterval))
 	placementGroupProvider := placementgroup.NewProvider(
 		ec2api,
-		cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval),
-		cache.New(awscache.PlacementGroupAvailabilityTTL, awscache.DefaultCleanupInterval),
+		cache.New("placementgroup", awscache.DefaultTTL, awscache.DefaultCleanupInterval),
+		cache.New("placementgroup.availability", awscache.PlacementGroupAvailabilityTTL, awscache.DefaultCleanupInterval),
 	)
 	amiResolver := amifamily.NewDefaultResolver(cfg.Region)
 	caBundle := lo.Must(GetCABundle(ctx, operator.GetConfig()))
 	launchTemplateProvider := launchtemplate.NewDefaultProvider(
 		ctx,
-		cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval),
+		cache.New("launchtemplate", awscache.DefaultTTL, awscache.DefaultCleanupInterval),
 		ec2api,
 		eksapi,
 		amiResolver,
@@ -206,13 +206,13 @@ func NewOperator(ctx context.Context, operator *operator.Operator) (context.Cont
 	capacityReservationProvider := capacityreservation.NewProvider(
 		ec2api,
 		operator.Clock,
-		cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval),
-		cache.New(awscache.CapacityReservationAvailabilityTTL, awscache.DefaultCleanupInterval),
+		cache.New("capacityreservation", awscache.DefaultTTL, awscache.DefaultCleanupInterval),
+		cache.New("capacityreservation.availability", awscache.CapacityReservationAvailabilityTTL, awscache.DefaultCleanupInterval),
 	)
 	instanceTypeProvider := instancetype.NewDefaultProvider(
-		cache.New(awscache.InstanceTypesZonesAndOfferingsTTL, awscache.DefaultCleanupInterval),
-		cache.New(awscache.InstanceTypesZonesAndOfferingsTTL, awscache.DefaultCleanupInterval),
-		cache.New(awscache.DiscoveredCapacityCacheTTL, awscache.DefaultCleanupInterval),
+		cache.New("instancetype", awscache.InstanceTypesZonesAndOfferingsTTL, awscache.DefaultCleanupInterval),
+		cache.New("instancetype.offering", awscache.InstanceTypesZonesAndOfferingsTTL, awscache.DefaultCleanupInterval),
+		cache.New("instancetype.discoveredcapacity", awscache.DiscoveredCapacityCacheTTL, awscache.DefaultCleanupInterval),
 		ec2api,
 		subnetProvider,
 		pricingProvider,
@@ -243,7 +243,7 @@ func NewOperator(ctx context.Context, operator *operator.Operator) (context.Cont
 		// List() for instances no longer returned by EC2. NoExpiration ensures cached instances
 		// in zonally shifted AZs remain available for the zonal shift guards in Get(), Delete(),
 		// and CreateTags(), even if List() cannot return instances from the impaired AZ.
-		cache.New(cache.NoExpiration, cache.NoExpiration),
+		cache.New("instance", cache.NoExpiration, cache.NoExpiration),
 	)
 	instanceStatusProvider := instancestatus.NewDefaultProvider(ec2api, operator.Clock)
 

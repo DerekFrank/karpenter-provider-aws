@@ -19,7 +19,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/patrickmn/go-cache"
+	"github.com/awslabs/operatorpkg/cache"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	clock "k8s.io/utils/clock/testing"
@@ -126,28 +126,28 @@ func NewEnvironment(ctx context.Context, env *coretest.Environment) *Environment
 	arczonalshiftapi := fake.NewARCZonalShiftAPI()
 
 	// cache
-	amiCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
-	ec2Cache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
-	instanceTypeCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
+	amiCache := cache.New("ami", awscache.DefaultTTL, awscache.DefaultCleanupInterval)
+	ec2Cache := cache.New("ec2", awscache.DefaultTTL, awscache.DefaultCleanupInterval)
+	instanceTypeCache := cache.New("instancetype", awscache.DefaultTTL, awscache.DefaultCleanupInterval)
 	// Instance cache entries never expire. See comment in pkg/operator/operator.go.
-	instanceCache := cache.New(cache.NoExpiration, cache.NoExpiration)
-	offeringCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
-	discoveredCapacityCache := cache.New(awscache.DiscoveredCapacityCacheTTL, awscache.DefaultCleanupInterval)
+	instanceCache := cache.New("instance", cache.NoExpiration, cache.NoExpiration)
+	offeringCache := cache.New("instancetype.offering", awscache.DefaultTTL, awscache.DefaultCleanupInterval)
+	discoveredCapacityCache := cache.New("instancetype.discoveredcapacity", awscache.DiscoveredCapacityCacheTTL, awscache.DefaultCleanupInterval)
 	unavailableOfferingsCache := awscache.NewUnavailableOfferings()
-	launchTemplateCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
-	subnetCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
-	availableIPAdressCache := cache.New(awscache.AvailableIPAddressTTL, awscache.DefaultCleanupInterval)
-	securityGroupCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
-	instanceProfileCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
-	roleCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
-	protectedProfilesCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
-	ssmCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
-	capacityReservationCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
-	capacityReservationAvailabilityCache := cache.New(24*time.Hour, awscache.DefaultCleanupInterval)
-	placementGroupCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
-	placementGroupAvailabilityCache := cache.New(awscache.PlacementGroupAvailabilityTTL, awscache.DefaultCleanupInterval)
-	validationCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
-	recreationCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
+	launchTemplateCache := cache.New("launchtemplate", awscache.DefaultTTL, awscache.DefaultCleanupInterval)
+	subnetCache := cache.New("subnet", awscache.DefaultTTL, awscache.DefaultCleanupInterval)
+	availableIPAdressCache := cache.New("subnet.availableip", awscache.AvailableIPAddressTTL, awscache.DefaultCleanupInterval)
+	securityGroupCache := cache.New("securitygroup", awscache.DefaultTTL, awscache.DefaultCleanupInterval)
+	instanceProfileCache := cache.New("instanceprofile", awscache.DefaultTTL, awscache.DefaultCleanupInterval)
+	roleCache := cache.New("instanceprofile.role", awscache.DefaultTTL, awscache.DefaultCleanupInterval)
+	protectedProfilesCache := cache.New("instanceprofile.protected", awscache.DefaultTTL, awscache.DefaultCleanupInterval)
+	ssmCache := cache.New("ssm", awscache.DefaultTTL, awscache.DefaultCleanupInterval)
+	capacityReservationCache := cache.New("capacityreservation", awscache.DefaultTTL, awscache.DefaultCleanupInterval)
+	capacityReservationAvailabilityCache := cache.New("capacityreservation.availability", 24*time.Hour, awscache.DefaultCleanupInterval)
+	placementGroupCache := cache.New("placementgroup", awscache.DefaultTTL, awscache.DefaultCleanupInterval)
+	placementGroupAvailabilityCache := cache.New("placementgroup.availability", awscache.PlacementGroupAvailabilityTTL, awscache.DefaultCleanupInterval)
+	validationCache := cache.New("nodeclass.validation", awscache.DefaultTTL, awscache.DefaultCleanupInterval)
+	recreationCache := cache.New("instanceprofile.recreation", awscache.DefaultTTL, awscache.DefaultCleanupInterval)
 	fakePricingAPI := &fake.PricingAPI{}
 	eventRecorder := coretest.NewEventRecorder()
 

@@ -28,7 +28,7 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/arczonalshift"
 
-	"github.com/patrickmn/go-cache"
+	"github.com/awslabs/operatorpkg/cache"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -130,11 +130,11 @@ below are the resources available with some assumptions and after the instance o
 	for _, region := range []string{"us-east-1", "us-east-2", "us-west-2"} {
 		cfg := lo.Must(config.LoadDefaultConfig(ctx, config.WithRegion(region)))
 		ec2api := ec2.NewFromConfig(cfg)
-		subnetProvider := subnet.NewDefaultProvider(ec2api, cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval), cache.New(awscache.AvailableIPAddressTTL, awscache.DefaultCleanupInterval))
+		subnetProvider := subnet.NewDefaultProvider(ec2api, cache.New("subnet", awscache.DefaultTTL, awscache.DefaultCleanupInterval), cache.New("subnet.availableip", awscache.AvailableIPAddressTTL, awscache.DefaultCleanupInterval))
 		instanceTypeProvider := instancetype.NewDefaultProvider(
-			cache.New(awscache.InstanceTypesZonesAndOfferingsTTL, awscache.DefaultCleanupInterval),
-			cache.New(awscache.InstanceTypesZonesAndOfferingsTTL, awscache.DefaultCleanupInterval),
-			cache.New(awscache.DiscoveredCapacityCacheTTL, awscache.DefaultCleanupInterval),
+			cache.New("instancetype", awscache.InstanceTypesZonesAndOfferingsTTL, awscache.DefaultCleanupInterval),
+			cache.New("instancetype.offering", awscache.InstanceTypesZonesAndOfferingsTTL, awscache.DefaultCleanupInterval),
+			cache.New("instancetype.discoveredcapacity", awscache.DiscoveredCapacityCacheTTL, awscache.DefaultCleanupInterval),
 			ec2api,
 			subnetProvider,
 			pricing.NewDefaultProvider(

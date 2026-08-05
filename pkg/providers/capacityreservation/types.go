@@ -22,7 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/mitchellh/hashstructure/v2"
-	"github.com/patrickmn/go-cache"
+	"github.com/awslabs/operatorpkg/cache"
 	"github.com/samber/lo"
 	"k8s.io/utils/clock"
 

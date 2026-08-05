@@ -23,7 +23,7 @@ import (
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/smithy-go"
 	"github.com/awslabs/operatorpkg/serrors"
-	cache "github.com/patrickmn/go-cache"
+	"github.com/awslabs/operatorpkg/cache"
 	"github.com/samber/lo"
 
 	sdk "github.com/aws/karpenter-provider-aws/pkg/aws"

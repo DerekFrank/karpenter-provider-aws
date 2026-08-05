@@ -55,7 +55,7 @@ import (
 	"github.com/aws/karpenter-provider-aws/pkg/providers/placementgroup"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/subnet"
 
-	"github.com/patrickmn/go-cache"
+	"github.com/awslabs/operatorpkg/cache"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/scheduling"
 )

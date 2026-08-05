@@ -20,7 +20,7 @@ import (
 	"sync"
 
 	"github.com/awslabs/operatorpkg/serrors"
-	"github.com/patrickmn/go-cache"
+	"github.com/awslabs/operatorpkg/cache"
 	"github.com/samber/lo"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 

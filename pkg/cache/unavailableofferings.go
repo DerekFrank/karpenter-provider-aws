@@ -26,7 +26,7 @@ import (
 	"github.com/samber/lo"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/patrickmn/go-cache"
+	"github.com/awslabs/operatorpkg/cache"
 )
 
 // UnavailableOfferingsOption is a functional option for scoping ICE cache entries.
@@ -65,12 +65,12 @@ type UnavailableOfferings struct {
 
 func NewUnavailableOfferings() *UnavailableOfferings {
 	uo := &UnavailableOfferings{
-		offeringCache:         cache.New(UnavailableOfferingsTTL, UnavailableOfferingsCleanupInterval),
+		offeringCache:         cache.New("unavailableofferings.offering", UnavailableOfferingsTTL, UnavailableOfferingsCleanupInterval),
 		offeringCacheSeqNumMu: sync.RWMutex{},
 		offeringCacheSeqNum:   map[ec2types.InstanceType]uint64{},
 
-		capacityTypeCache: cache.New(UnavailableOfferingsTTL, UnavailableOfferingsCleanupInterval),
-		subnetCache:       cache.New(UnavailableOfferingsTTL, UnavailableOfferingsCleanupInterval),
+		capacityTypeCache: cache.New("unavailableofferings.capacitytype", UnavailableOfferingsTTL, UnavailableOfferingsCleanupInterval),
+		subnetCache:       cache.New("unavailableofferings.subnet", UnavailableOfferingsTTL, UnavailableOfferingsCleanupInterval),
 	}
 	uo.offeringCache.OnEvicted(func(k string, _ any) {
 		elems := strings.Split(k, ":")
