@@ -281,22 +281,27 @@ Request latency in seconds. Broken down by verb, group, version, kind, and subre
 ### `aws_sdk_go_request_total`
 The total number of AWS SDK Go requests
 - Stability Level: STABLE
+- Dimensions: `service`, `action`, `code`
 
 ### `aws_sdk_go_request_retry_count`
 The total number of AWS SDK Go retry attempts per request
 - Stability Level: STABLE
+- Dimensions: `service`, `action`, `code`
 
 ### `aws_sdk_go_request_duration_seconds`
 Latency of AWS SDK Go requests
 - Stability Level: STABLE
+- Dimensions: `service`, `action`, `code`
 
 ### `aws_sdk_go_request_attempt_total`
 The total number of AWS SDK Go request attempts
 - Stability Level: STABLE
+- Dimensions: `service`, `action`, `code`
 
 ### `aws_sdk_go_request_attempt_duration_seconds`
 Latency of AWS SDK Go request attempts
 - Stability Level: STABLE
+- Dimensions: `service`, `action`, `code`
 
 ## Leader Election Metrics
 
