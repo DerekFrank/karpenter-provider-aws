@@ -41,6 +41,12 @@ type metricInfo struct {
 	name      string
 	help      string
 	labels    []string
+	// labelScope, when non-empty, selects a scoped label registry to resolve this
+	// metric's dimensions before falling back to the global registry. It
+	// disambiguates dimension names reused with different meanings across code
+	// bases (e.g. `reason` means a karpenter action reason in karpenter metrics
+	// but a status-condition reason in operatorpkg metrics).
+	labelScope string
 }
 
 var (
@@ -60,7 +66,24 @@ var (
 	// (both karpenter core and karpenter-provider-aws). It is the source of truth for
 	// per-dimension help text and stable values.
 	labelRegistry = map[string]labelInfo{}
+	// scopedLabelRegistry holds the same Label documentation keyed first by a scope
+	// (the code base a Label was declared in, e.g. "operatorpkg") and then by name.
+	// A metric with a matching labelScope resolves its dimensions here first, so a
+	// name reused with a different meaning across code bases (e.g. `reason`) gets
+	// the documentation from its own code base rather than whichever was scanned
+	// first into the global registry.
+	scopedLabelRegistry = map[string]map[string]labelInfo{}
 )
+
+// labelScopeForFile returns the scope a Label declaration belongs to, based on
+// the file it was declared in. operatorpkg-declared Labels document the
+// dimensions of operatorpkg's status/termination/event metrics.
+func labelScopeForFile(file string) string {
+	if strings.Contains(file, "operatorpkg") {
+		return "operatorpkg"
+	}
+	return ""
+}
 
 // labelInfo is the resolved documentation for a metric dimension.
 type labelInfo struct {
@@ -95,11 +118,19 @@ var labelInjections = map[string]map[string]labelInfo{
 }
 
 // describeLabel resolves documentation for a metric's dimension, preferring a
-// subsystem-scoped third-party injection, then the code-sourced label registry.
-func describeLabel(subsystem, name string) (labelInfo, bool) {
+// subsystem-scoped third-party injection, then a code-base-scoped label (when the
+// metric declares a labelScope), then the global code-sourced label registry.
+func describeLabel(subsystem, name, scope string) (labelInfo, bool) {
 	if inj, ok := labelInjections[subsystem]; ok {
 		if li, ok := inj[name]; ok {
 			return li, true
+		}
+	}
+	if scope != "" {
+		if scoped, ok := scopedLabelRegistry[scope]; ok {
+			if li, ok := scoped[name]; ok {
+				return li, true
+			}
 		}
 	}
 	if li, ok := labelRegistry[name]; ok {
@@ -257,7 +288,7 @@ func formatDimensions(m metricInfo) string {
 	var b strings.Builder
 	for _, l := range m.labels {
 		b.WriteString(fmt.Sprintf("\n  - `%s`", l))
-		info, ok := describeLabel(m.subsystem, l)
+		info, ok := describeLabel(m.subsystem, l, m.labelScope)
 		if !ok {
 			continue
 		}
@@ -372,38 +403,47 @@ func perObjectStatusMetrics() []metricInfo {
 		subsystemSuffix string
 		name            string
 		help            string
+		// labels are the base dimensions the metric always carries, in the order
+		// operatorpkg declares them (see operatorpkg status/metrics.go). Per-object
+		// controllers may append registration-specific labels at runtime that cannot
+		// be determined statically; those are omitted here.
+		labels []string
 	}
 
 	templates := []metricTemplate{
-		{"status_condition", "transition_seconds", "The amount of time a condition was in a given state before transitioning. e.g. Alarm := P99(Updated=False) > 5 minutes"},
-		{"status_condition", "count", "The number of a condition for a given object, type and status. e.g. Alarm := Available=False > 0"},
-		{"status_condition", "current_status_seconds", "The current amount of time in seconds that a status condition has been in a specific state. Alarm := P99(Updated=Unknown) > 5 minutes"},
-		{"status_condition", "transitions_total", "The count of transitions of a given object, type and status."},
-		{"termination", "current_time_seconds", "The current amount of time in seconds that an object has been in terminating state."},
-		{"termination", "duration_seconds", "The amount of time taken by an object to terminate completely."},
+		{"status_condition", "transition_seconds", "The amount of time a condition was in a given state before transitioning. e.g. Alarm := P99(Updated=False) > 5 minutes", []string{"type", "status", "to_status"}},
+		{"status_condition", "count", "The number of a condition for a given object, type and status. e.g. Alarm := Available=False > 0", []string{"namespace", "name", "type", "status", "reason"}},
+		{"status_condition", "current_status_seconds", "The current amount of time in seconds that a status condition has been in a specific state. Alarm := P99(Updated=Unknown) > 5 minutes", []string{"namespace", "name", "type", "status", "reason"}},
+		{"status_condition", "transitions_total", "The count of transitions of a given object, type and status.", []string{"type", "status", "reason"}},
+		{"termination", "current_time_seconds", "The current amount of time in seconds that an object has been in terminating state.", []string{"namespace", "name"}},
+		{"termination", "duration_seconds", "The amount of time taken by an object to terminate completely.", nil},
 	}
 
 	var metricsOut []metricInfo
 	for _, obj := range objectNames {
 		for _, t := range templates {
 			metricsOut = append(metricsOut, metricInfo{
-				namespace: "operator",
-				subsystem: fmt.Sprintf("%s_%s", obj, t.subsystemSuffix),
-				name:      t.name,
-				help:      t.help,
+				namespace:  "operator",
+				subsystem:  fmt.Sprintf("%s_%s", obj, t.subsystemSuffix),
+				name:       t.name,
+				help:       t.help,
+				labels:     t.labels,
+				labelScope: "operatorpkg",
 			})
 		}
 	}
 
 	// Deprecated generic metrics (without object name prefix) are still emitted at runtime
-	// when emitDeprecatedMetrics is enabled on the status controller. These use group/kind
-	// labels instead of baking the object name into the subsystem.
+	// when emitDeprecatedMetrics is enabled on the status controller. These additionally
+	// carry group/kind labels instead of baking the object name into the subsystem.
 	for _, t := range templates {
 		metricsOut = append(metricsOut, metricInfo{
-			namespace: "operator",
-			subsystem: t.subsystemSuffix,
-			name:      t.name,
-			help:      t.help,
+			namespace:  "operator",
+			subsystem:  t.subsystemSuffix,
+			name:       t.name,
+			help:       t.help,
+			labels:     append(append([]string{}, t.labels...), "group", "kind"),
+			labelScope: "operatorpkg",
 		})
 	}
 
@@ -516,7 +556,7 @@ func metricFromCallExpr(ce *ast.CallExpr) (metricInfo, bool) {
 // across packages are marked ambiguous and treated as unresolvable.
 func collectSymbols(packages []*ast.Package) {
 	// Pass 1: string constants/variables.
-	forEachValueSpec(packages, func(name string, value ast.Expr) {
+	forEachValueSpec(packages, func(_, name string, value ast.Expr) {
 		if s, ok := stringLiteralValue(value); ok {
 			if existing, seen := stringSymbols[name]; seen && existing != s {
 				ambiguousStrings[name] = true
@@ -532,7 +572,7 @@ func collectSymbols(packages []*ast.Package) {
 	// small fixpoint to handle aliases of aliases.
 	for range 3 {
 		changed := false
-		forEachValueSpec(packages, func(name string, value ast.Expr) {
+		forEachValueSpec(packages, func(_, name string, value ast.Expr) {
 			if _, seen := stringSymbols[name]; seen {
 				return
 			}
@@ -549,7 +589,7 @@ func collectSymbols(packages []*ast.Package) {
 		}
 	}
 	// Pass 2: []string composite literals (may reference the string symbols above).
-	forEachValueSpec(packages, func(name string, value ast.Expr) {
+	forEachValueSpec(packages, func(_, name string, value ast.Expr) {
 		cl, ok := value.(*ast.CompositeLit)
 		if !ok {
 			return
@@ -573,7 +613,7 @@ func collectSymbols(packages []*ast.Package) {
 // help text is preferred over one that does not, so a fully-documented shared Label
 // wins over a bare reference elsewhere.
 func collectLabels(packages []*ast.Package) {
-	forEachValueSpec(packages, func(_ string, value ast.Expr) {
+	forEachValueSpec(packages, func(file, _ string, value ast.Expr) {
 		cl, ok := value.(*ast.CompositeLit)
 		if !ok || !isLabelType(cl.Type) {
 			return
@@ -608,10 +648,28 @@ func collectLabels(packages []*ast.Package) {
 		if !haveName {
 			return
 		}
-		if existing, seen := labelRegistry[name]; seen && !(existing.help == "" && help != "") {
+		info := labelInfo{help: help, values: values}
+		// A Label goes into the registry for its declaring code base. Labels from a
+		// scoped code base (e.g. operatorpkg) are recorded ONLY in that scope, not the
+		// global registry, so a name reused with a different meaning (e.g. `name`,
+		// `reason`) does not leak operatorpkg's documentation onto unrelated karpenter
+		// or third-party metrics. Only metrics that opt into the scope resolve here.
+		// In every registry the first entry with help wins, so a fully-documented
+		// Label beats a bare reference elsewhere.
+		if scope := labelScopeForFile(file); scope != "" {
+			scoped, ok := scopedLabelRegistry[scope]
+			if !ok {
+				scoped = map[string]labelInfo{}
+				scopedLabelRegistry[scope] = scoped
+			}
+			if existing, seen := scoped[name]; !seen || (existing.help == "" && help != "") {
+				scoped[name] = info
+			}
 			return
 		}
-		labelRegistry[name] = labelInfo{help: help, values: values}
+		if existing, seen := labelRegistry[name]; !seen || (existing.help == "" && help != "") {
+			labelRegistry[name] = info
+		}
 	})
 }
 
@@ -628,11 +686,12 @@ func isLabelType(t ast.Expr) bool {
 	return false
 }
 
-// forEachValueSpec invokes fn for every (name, value) pair in package-level const/var
-// declarations across the given packages.
-func forEachValueSpec(packages []*ast.Package, fn func(name string, value ast.Expr)) {
+// forEachValueSpec invokes fn for every (file, name, value) tuple in package-level
+// const/var declarations across the given packages. file is the path of the source
+// file the declaration was parsed from, used to attribute a declaration to a code base.
+func forEachValueSpec(packages []*ast.Package, fn func(file, name string, value ast.Expr)) {
 	for _, pkg := range packages {
-		for _, file := range pkg.Files {
+		for filePath, file := range pkg.Files {
 			for _, decl := range file.Decls {
 				gd, ok := decl.(*ast.GenDecl)
 				if !ok || (gd.Tok != token.CONST && gd.Tok != token.VAR) {
@@ -645,7 +704,7 @@ func forEachValueSpec(packages []*ast.Package, fn func(name string, value ast.Ex
 					}
 					for i, nm := range vs.Names {
 						if i < len(vs.Values) {
-							fn(nm.Name, vs.Values[i])
+							fn(filePath, nm.Name, vs.Values[i])
 						}
 					}
 				}
