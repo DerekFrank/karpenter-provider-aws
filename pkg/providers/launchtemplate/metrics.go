@@ -32,6 +32,12 @@ const (
 	userDataWarnBytes = userDataMaxBytes * 9 / 10
 )
 
+// NodeClass describes the nodeclass dimension identifying the owning EC2NodeClass.
+var NodeClass = metrics.Label{
+	Name: nodeClassLabel,
+	Help: "The name of the EC2NodeClass the metric was recorded for.",
+}
+
 var (
 	// UserDataBytes is recorded when the user data is rendered, just before ec2:CreateLaunchTemplate, so an
 	// oversized rendering is still reported even though EC2 rejects the create. Only the create path writes

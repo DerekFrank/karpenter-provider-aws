@@ -28,6 +28,18 @@ const (
 	categoryLabel         = "category"
 )
 
+// Interruption metric dimensions.
+var (
+	MessageType = metrics.Label{
+		Name: messageTypeLabel,
+		Help: "The type of interruption message received from the SQS queue, e.g. `spot_interruption`, `scheduled_change`, `state_change`, `rebalance_recommendation`.",
+	}
+	Category = metrics.Label{
+		Name: categoryLabel,
+		Help: "The EC2 instance status check category that was detected as unhealthy.",
+	}
+)
+
 var (
 	ReceivedMessages = opmetrics.NewPrometheusCounter(
 		crmetrics.Registry,

@@ -11,40 +11,76 @@ Karpenter makes several metrics available in Prometheus format to allow monitori
 ### `karpenter_consolidation_score`
 Score of balanced consolidation moves. Labeled by decision, NodePool, and policy.
 - Stability Level: ALPHA
+- Dimensions:
+  - `decision` — The disruption decision taken for the candidate(s). (values: `no-op`, `replace`, `delete`, `approved`, `rejected`)
+  - `nodepool` — The name of the NodePool that owns the resource.
+  - `policy` — The NodePool consolidation policy in effect for the move.
 
 ### `karpenter_consolidation_moves_total`
 Number of balanced consolidation moves. Labeled by decision, NodePool, and policy.
 - Stability Level: ALPHA
+- Dimensions:
+  - `decision` — The disruption decision taken for the candidate(s). (values: `no-op`, `replace`, `delete`, `approved`, `rejected`)
+  - `nodepool` — The name of the NodePool that owns the resource.
+  - `policy` — The NodePool consolidation policy in effect for the move.
 
 ### `karpenter_build_info`
 A metric with a constant '1' value labeled by version from which karpenter was built.
 - Stability Level: STABLE
+- Dimensions:
+  - `version`
+  - `goversion`
+  - `goarch`
+  - `commit`
 
 ## Nodeclaims Metrics
 
 ### `karpenter_nodeclaims_unhealthy_disrupted_total`
 Number of unhealthy nodeclaims disrupted in total by Karpenter. Labeled by condition on the node was disrupted, the owning nodepool, and the image ID.
 - Stability Level: ALPHA
+- Dimensions:
+  - `condition`
+  - `nodepool` — The name of the NodePool that owns the resource.
+  - `capacity_type` — The capacity type of the instance. (values: `on-demand`, `spot`, `reserved`)
+  - `image_id`
 
 ### `karpenter_nodeclaims_termination_duration_seconds`
 Duration of NodeClaim termination in seconds.
 - Stability Level: BETA
+- Dimensions:
+  - `nodepool` — The name of the NodePool that owns the resource.
 
 ### `karpenter_nodeclaims_terminated_total`
 Number of nodeclaims terminated in total by Karpenter. Labeled by the owning nodepool, capacity type, and zone.
 - Stability Level: STABLE
+- Dimensions:
+  - `nodepool` — The name of the NodePool that owns the resource.
+  - `capacity_type` — The capacity type of the instance. (values: `on-demand`, `spot`, `reserved`)
+  - `zone` — The availability zone of the instance.
 
 ### `karpenter_nodeclaims_instance_termination_duration_seconds`
 Duration of CloudProvider Instance termination in seconds.
 - Stability Level: BETA
+- Dimensions:
+  - `nodepool` — The name of the NodePool that owns the resource.
 
 ### `karpenter_nodeclaims_disrupted_total`
-Number of nodeclaims disrupted in total by Karpenter. Labeled by reason the nodeclaim was disrupted and the owning nodepool.
+Number of nodeclaims disrupted in total by Karpenter. Labeled by reason the nodeclaim was disrupted, the owning nodepool, the capacity type, the consolidation policy, and the termination mode.
 - Stability Level: ALPHA
+- Dimensions:
+  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+  - `nodepool` — The name of the NodePool that owns the resource.
+  - `capacity_type` — The capacity type of the instance. (values: `on-demand`, `spot`, `reserved`)
+  - `consolidation_policy` — The NodePool consolidation policy in effect. (values: `WhenEmpty`, `WhenEmptyOrUnderutilized`, `Balanced`)
+  - `termination_mode` — The termination mode used to disrupt the node. (values: `graceful`, `eventual`, `forceful`)
 
 ### `karpenter_nodeclaims_created_total`
 Number of nodeclaims created in total by Karpenter. Labeled by reason the nodeclaim was created, the owning nodepool, and if min values was relaxed for this nodeclaim.
 - Stability Level: STABLE
+- Dimensions:
+  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+  - `nodepool` — The name of the NodePool that owns the resource.
+  - `min_values_relaxed` — Whether minValues requirements were relaxed to satisfy scheduling.
 
 ## Nodeclaim Termination Metrics
 
@@ -95,10 +131,15 @@ Node total daemon limits are the resources specified by DaemonSet pod limits.
 ### `karpenter_nodes_termination_duration_seconds`
 The time taken between a node's deletion request and the removal of its finalizer
 - Stability Level: BETA
+- Dimensions:
+  - `nodepool` — The name of the NodePool that owns the resource.
 
 ### `karpenter_nodes_terminated_total`
 Number of nodes terminated in total by Karpenter. Labeled by owning nodepool and zone.
 - Stability Level: STABLE
+- Dimensions:
+  - `nodepool` — The name of the NodePool that owns the resource.
+  - `zone` — The availability zone of the instance.
 
 ### `karpenter_nodes_system_overhead`
 Node system daemon overhead are the resources reserved for system overhead, the difference between the node's capacity and allocatable values are reported by the status.
@@ -107,10 +148,14 @@ Node system daemon overhead are the resources reserved for system overhead, the 
 ### `karpenter_nodes_lifetime_duration_seconds`
 The lifetime duration of the nodes since creation.
 - Stability Level: ALPHA
+- Dimensions:
+  - `nodepool` — The name of the NodePool that owns the resource.
 
 ### `karpenter_nodes_drained_total`
 The total number of nodes drained by Karpenter
 - Stability Level: ALPHA
+- Dimensions:
+  - `nodepool` — The name of the NodePool that owns the resource.
 
 ### `karpenter_nodes_current_lifetime_seconds`
 Node age in seconds
@@ -119,6 +164,9 @@ Node age in seconds
 ### `karpenter_nodes_created_total`
 Number of nodes created in total by Karpenter. Labeled by owning nodepool and zone.
 - Stability Level: STABLE
+- Dimensions:
+  - `nodepool` — The name of the NodePool that owns the resource.
+  - `zone` — The availability zone of the instance.
 
 ### `karpenter_nodes_allocatable`
 Node allocatable are the resources allocatable by nodes.
@@ -157,10 +205,16 @@ The number of a condition for a given object, type and status. e.g. Alarm := Ava
 ### `karpenter_pods_unstarted_time_seconds`
 The time from pod creation until the pod is running.
 - Stability Level: ALPHA
+- Dimensions:
+  - `name`
+  - `namespace`
 
 ### `karpenter_pods_unbound_time_seconds`
 The time from pod creation until the pod is bound.
 - Stability Level: ALPHA
+- Dimensions:
+  - `name`
+  - `namespace`
 
 ### `karpenter_pods_state`
 Pod state is the current state of pods. This metric can be used several ways as it is labeled by the pod name, namespace, owner, node, nodepool name, zone, architecture, capacity type, instance type, pod phase, and pod readiness.
@@ -177,10 +231,16 @@ The time it takes for Karpenter to first try to schedule a pod after it's been s
 ### `karpenter_pods_provisioning_unstarted_time_seconds`
 The time from when Karpenter first thinks the pod can schedule until the pod is running. Note: this calculated from a point in memory, not by the pod creation timestamp.
 - Stability Level: ALPHA
+- Dimensions:
+  - `name`
+  - `namespace`
 
 ### `karpenter_pods_provisioning_unbound_time_seconds`
 The time from when Karpenter first thinks the pod can schedule until it binds. Note: this calculated from a point in memory, not by the pod creation timestamp.
 - Stability Level: ALPHA
+- Dimensions:
+  - `name`
+  - `namespace`
 
 ### `karpenter_pods_provisioning_startup_duration_seconds`
 The time from when Karpenter first thinks the pod can schedule until the pod is running. Note: this calculated from a point in memory, not by the pod creation timestamp.
@@ -189,6 +249,9 @@ The time from when Karpenter first thinks the pod can schedule until the pod is 
 ### `karpenter_pods_provisioning_scheduling_undecided_time_seconds`
 The time from when Karpenter has seen a pod without making a scheduling decision for the pod. Note: this calculated from a point in memory, not by the pod creation timestamp.
 - Stability Level: ALPHA
+- Dimensions:
+  - `name`
+  - `namespace`
 
 ### `karpenter_pods_provisioning_bound_duration_seconds`
 The time from when Karpenter first thinks the pod can schedule until it binds. Note: this calculated from a point in memory, not by the pod creation timestamp.
@@ -197,10 +260,24 @@ The time from when Karpenter first thinks the pod can schedule until it binds. N
 ### `karpenter_pods_eviction_requests_total`
 The total number of pod eviction requests made by Karpenter, labeled by response code
 - Stability Level: ALPHA
+- Dimensions:
+  - `code` — The HTTP response code returned by the Kubernetes eviction API for the eviction request.
 
 ### `karpenter_pods_drained_total`
 The total number of pods drained during node termination by Karpenter, labeled by reason
 - Stability Level: ALPHA
+- Dimensions:
+  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+
+### `karpenter_pods_disruption_initiated_total`
+Number of pod disruptions initiated in total by Karpenter, incremented by the reschedulable pod count whenever the underlying nodeclaim is disrupted. Labeled by reason the nodeclaim was disrupted, the owning nodepool, the capacity type, the consolidation policy, and the termination mode. Pods owned by DaemonSets and mirror pods are excluded.
+- Stability Level: ALPHA
+- Dimensions:
+  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+  - `nodepool` — The name of the NodePool that owns the resource.
+  - `capacity_type` — The capacity type of the instance. (values: `on-demand`, `spot`, `reserved`)
+  - `consolidation_policy` — The NodePool consolidation policy in effect. (values: `WhenEmpty`, `WhenEmptyOrUnderutilized`, `Balanced`)
+  - `termination_mode` — The termination mode used to disrupt the node. (values: `graceful`, `eventual`, `forceful`)
 
 ### `karpenter_pods_bound_duration_seconds`
 The time from pod creation until the pod is bound.
@@ -267,52 +344,87 @@ The number of a condition for a given object, type and status. e.g. Alarm := Ava
 ### `karpenter_voluntary_disruption_queue_failures_total`
 The number of times that an enqueued disruption decision failed. Labeled by disruption method.
 - Stability Level: BETA
+- Dimensions:
+  - `decision` — The disruption decision taken for the candidate(s). (values: `no-op`, `replace`, `delete`, `approved`, `rejected`)
+  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+  - `consolidation_type` — The consolidation algorithm that produced the decision. (values: `multi`, `single`)
 
 ### `karpenter_voluntary_disruption_failed_validations_total`
 Number of candidates that were selected for disruption but failed validation. Labeled by consolidation type.
 - Stability Level: ALPHA
+- Dimensions:
+  - `consolidation_type` — The consolidation algorithm that produced the decision. (values: `multi`, `single`)
 
 ### `karpenter_voluntary_disruption_eligible_nodes`
 Number of nodes eligible for disruption by Karpenter. Labeled by disruption reason.
 - Stability Level: BETA
+- Dimensions:
+  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
 
 ### `karpenter_voluntary_disruption_decisions_total`
 Number of disruption decisions performed. Labeled by disruption decision, reason, and consolidation type.
 - Stability Level: STABLE
+- Dimensions:
+  - `decision` — The disruption decision taken for the candidate(s). (values: `no-op`, `replace`, `delete`, `approved`, `rejected`)
+  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+  - `consolidation_type` — The consolidation algorithm that produced the decision. (values: `multi`, `single`)
 
 ### `karpenter_voluntary_disruption_decisions_by_nodepool_total`
 Number of disruption decisions performed by nodepool. Labeled by nodepool name, disruption decision, reason, and consolidation type.
 - Stability Level: ALPHA
+- Dimensions:
+  - `nodepool` — The name of the NodePool that owns the resource.
+  - `decision` — The disruption decision taken for the candidate(s). (values: `no-op`, `replace`, `delete`, `approved`, `rejected`)
+  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+  - `consolidation_type` — The consolidation algorithm that produced the decision. (values: `multi`, `single`)
 
 ### `karpenter_voluntary_disruption_decision_evaluation_duration_seconds`
 Duration of the disruption decision evaluation process in seconds. Labeled by method and consolidation type.
 - Stability Level: BETA
+- Dimensions:
+  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+  - `consolidation_type` — The consolidation algorithm that produced the decision. (values: `multi`, `single`)
 
 ### `karpenter_voluntary_disruption_consolidation_timeouts_total`
 Number of times the Consolidation algorithm has reached a timeout. Labeled by consolidation type.
 - Stability Level: BETA
+- Dimensions:
+  - `consolidation_type` — The consolidation algorithm that produced the decision. (values: `multi`, `single`)
 
 ## Scheduler Metrics
 
 ### `karpenter_scheduler_unschedulable_pods_count`
 The number of unschedulable Pods.
 - Stability Level: ALPHA
+- Dimensions:
+  - `controller` — The name of the controller that emitted the metric.
 
 ### `karpenter_scheduler_unfinished_work_seconds`
 How many seconds of work has been done that is in progress and hasn't been observed by scheduling_duration_seconds.
 - Stability Level: ALPHA
+- Dimensions:
+  - `controller` — The name of the controller that emitted the metric.
+  - `scheduling_id` — A unique identifier for a scheduling simulation run.
 
 ### `karpenter_scheduler_scheduling_duration_seconds`
 Duration of scheduling simulations used for deprovisioning and provisioning in seconds.
 - Stability Level: STABLE
+- Dimensions:
+  - `controller` — The name of the controller that emitted the metric.
 
 ### `karpenter_scheduler_queue_depth`
 The number of pods currently waiting to be scheduled.
 - Stability Level: BETA
+- Dimensions:
+  - `controller` — The name of the controller that emitted the metric.
+  - `scheduling_id` — A unique identifier for a scheduling simulation run.
 
 ### `karpenter_scheduler_pending_pods_by_effective_zone_count`
 Pending pods dimensioned by effective zone constraint, or the intersection of pod-level zone signals, volume topology (PVC zones), and topology constraints. Values: specific zone name (e.g., 'us-west-2a'), 'flexible' (multiple zones), or 'none' (no valid intersection).
 - Stability Level: ALPHA
+- Dimensions:
+  - `controller` — The name of the controller that emitted the metric.
+  - `zone` — The availability zone of the instance.
 
 ### `karpenter_scheduler_ignored_pods_count`
 Number of pods ignored during scheduling by Karpenter
@@ -323,32 +435,50 @@ Number of pods ignored during scheduling by Karpenter
 ### `karpenter_nodepools_usage`
 The amount of resources that have been provisioned for a nodepool. Labeled by nodepool name and resource type.
 - Stability Level: ALPHA
+- Dimensions:
+  - `resource_type` — The Kubernetes resource type, e.g. `cpu`, `memory`, `pods`.
+  - `nodepool` — The name of the NodePool that owns the resource.
 
 ### `karpenter_nodepools_nodes_consuming_budgets`
 The number of nodes consuming the budget of a nodepool at a point in time. Labeled by NodePool.
 - Stability Level: ALPHA
+- Dimensions:
+  - `nodepool` — The name of the NodePool that owns the resource.
+  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
 
 ### `karpenter_nodepools_limit`
 Limits specified on the nodepool that restrict the quantity of resources provisioned. Labeled by nodepool name and resource type.
 - Stability Level: ALPHA
+- Dimensions:
+  - `resource_type` — The Kubernetes resource type, e.g. `cpu`, `memory`, `pods`.
+  - `nodepool` — The name of the NodePool that owns the resource.
 
 ### `karpenter_nodepools_cost_tracker_errors_total`
 Number of errors encountered during cost tracking operations. Labeled by nodepool and nodeclaim.
 - Stability Level: ALPHA
+- Dimensions:
+  - `nodepool` — The name of the NodePool that owns the resource.
 
 ### `karpenter_nodepools_cost_total`
 Total cost of the nodepool from Karpenter's perspective. Units are determined by the cloud provider. Not an authoritative source for billing. Includes modifications due to NodeOverlays
 - Stability Level: ALPHA
+- Dimensions:
+  - `nodepool` — The name of the NodePool that owns the resource.
 
 ### `karpenter_nodepools_allowed_disruptions`
 The number of nodes for a given NodePool that can be concurrently disrupting at a point in time. Labeled by NodePool. Note that allowed disruptions can change very rapidly, as new nodes may be created and others may be deleted at any point.
 - Stability Level: ALPHA
+- Dimensions:
+  - `nodepool` — The name of the NodePool that owns the resource.
+  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
 
 ## Interruption Metrics
 
 ### `karpenter_interruption_received_messages_total`
 Count of messages received from the SQS queue. Broken down by message type and whether the message was actionable.
 - Stability Level: STABLE
+- Dimensions:
+  - `message_type` — The type of interruption message received from the SQS queue, e.g. `spot_interruption`, `scheduled_change`, `state_change`, `rebalance_recommendation`.
 
 ### `karpenter_interruption_message_queue_duration_seconds`
 Amount of time an interruption message is on the queue before it is processed by karpenter.
@@ -357,6 +487,8 @@ Amount of time an interruption message is on the queue before it is processed by
 ### `karpenter_interruption_instance_status_unhealthy_total`
 Count of unique unhealthy instance statuses detected from EC2 DescribeInstanceStatus. Broken down by status check category.
 - Stability Level: STABLE
+- Dimensions:
+  - `category` — The EC2 instance status check category that was detected as unhealthy.
 
 ### `karpenter_interruption_deleted_messages_total`
 Count of messages deleted from the SQS queue.
@@ -367,12 +499,16 @@ Count of messages deleted from the SQS queue.
 ### `karpenter_ec2nodeclasses_userdata_bytes`
 Size in bytes of the rendered user data (raw, pre-base64) for the EC2NodeClass
 - Stability Level: ALPHA
+- Dimensions:
+  - `nodeclass` — The name of the EC2NodeClass the metric was recorded for.
 
 ## Cluster Metrics
 
 ### `karpenter_cluster_utilization_percent`
 Utilization of allocatable resources by pod requests
 - Stability Level: ALPHA
+- Dimensions:
+  - `resource_type` — The Kubernetes resource type, e.g. `cpu`, `memory`, `pods`.
 
 ## Cluster State Metrics
 
@@ -393,74 +529,122 @@ Current count of nodes in cluster state
 ### `karpenter_cloudprovider_instance_type_offering_price_estimate`
 Instance type offering estimated hourly price used when making informed decisions on node cost calculation, based on instance type, capacity type, and zone.
 - Stability Level: BETA
+- Dimensions:
+  - `instance_type` — The EC2 instance type, e.g. `m5.large`.
+  - `capacity_type` — The capacity type of the instance. (values: `on-demand`, `spot`, `reserved`)
+  - `zone` — The availability zone of the instance.
 
 ### `karpenter_cloudprovider_instance_type_offering_available`
 Instance type offering availability, based on instance type, capacity type, and zone
 - Stability Level: BETA
+- Dimensions:
+  - `instance_type` — The EC2 instance type, e.g. `m5.large`.
+  - `capacity_type` — The capacity type of the instance. (values: `on-demand`, `spot`, `reserved`)
+  - `zone` — The availability zone of the instance.
 
 ### `karpenter_cloudprovider_instance_type_memory_bytes`
 Memory, in bytes, for a given instance type.
 - Stability Level: BETA
+- Dimensions:
+  - `instance_type` — The EC2 instance type, e.g. `m5.large`.
 
 ### `karpenter_cloudprovider_instance_type_cpu_cores`
 VCPUs cores for a given instance type.
 - Stability Level: BETA
+- Dimensions:
+  - `instance_type` — The EC2 instance type, e.g. `m5.large`.
 
 ### `karpenter_cloudprovider_instance_termination_failures_total`
 Number of instance termination (TerminateInstances) failures, dimensioned by availability zone and zone ID.
 - Stability Level: BETA
+- Dimensions:
+  - `zone` — The availability zone of the instance.
+  - `zone_id` — The availability zone ID of the instance, e.g. `usw2-az1` (stable across accounts, unlike the zone name).
 
 ### `karpenter_cloudprovider_instance_launch_failures_total`
 Number of instance launch (CreateFleet offering) failures, dimensioned by availability zone, zone ID, capacity type, and launch failure reason.
 - Stability Level: BETA
+- Dimensions:
+  - `zone` — The availability zone of the instance.
+  - `zone_id` — The availability zone ID of the instance, e.g. `usw2-az1` (stable across accounts, unlike the zone name).
+  - `capacity_type` — The capacity type of the instance. (values: `on-demand`, `spot`, `reserved`)
+  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
 
 ### `karpenter_cloudprovider_errors_total`
 Total number of errors returned from CloudProvider calls.
 - Stability Level: BETA
+- Dimensions:
+  - `controller` — The name of the controller that emitted the metric.
+  - `method` — The CloudProvider interface method that was called, e.g. `Create`, `Delete`, `Get`, `List`, `GetInstanceTypes`, `IsDrifted`.
+  - `provider` — The name of the cloud provider implementation.
+  - `error` — The category of error returned by the CloudProvider call. (values: `NodeClaimNotFoundError`, `NodeClassNotReadyError`, `InsufficientCapacityError`)
 
 ### `karpenter_cloudprovider_duration_seconds`
 Duration of cloud provider method calls. Labeled by the controller, method name and provider.
 - Stability Level: BETA
+- Dimensions:
+  - `controller` — The name of the controller that emitted the metric.
+  - `method` — The CloudProvider interface method that was called, e.g. `Create`, `Delete`, `Get`, `List`, `GetInstanceTypes`, `IsDrifted`.
+  - `provider` — The name of the cloud provider implementation.
 
 ## Cloudprovider Batcher Metrics
 
 ### `karpenter_cloudprovider_batcher_batch_time_seconds`
 Duration of the batching window per batcher
 - Stability Level: BETA
+- Dimensions:
+  - `batcher` — The name of the request batcher the metric was recorded for, e.g. `create_fleet`, `terminate_instances`.
 
 ### `karpenter_cloudprovider_batcher_batch_size`
 Size of the request batch per batcher
 - Stability Level: BETA
+- Dimensions:
+  - `batcher` — The name of the request batcher the metric was recorded for, e.g. `create_fleet`, `terminate_instances`.
 
 ## Controller Runtime Metrics
 
 ### `controller_runtime_terminal_reconcile_errors_total`
 Total number of terminal reconciliation errors per controller
 - Stability Level: STABLE
+- Dimensions:
+  - `controller` — The name of the controller that owns the reconcile loop.
 
 ### `controller_runtime_reconcile_total`
 Total number of reconciliations per controller
 - Stability Level: STABLE
+- Dimensions:
+  - `controller` — The name of the controller that owns the reconcile loop.
+  - `result` — The outcome of the reconcile call. (values: `success`, `error`, `requeue`, `requeue_after`)
 
 ### `controller_runtime_reconcile_timeouts_total`
 Total number of reconciliation timeouts per controller
 - Stability Level: STABLE
+- Dimensions:
+  - `controller` — The name of the controller that owns the reconcile loop.
 
 ### `controller_runtime_reconcile_time_seconds`
 Length of time per reconciliation per controller
 - Stability Level: STABLE
+- Dimensions:
+  - `controller` — The name of the controller that owns the reconcile loop.
 
 ### `controller_runtime_reconcile_panics_total`
 Total number of reconciliation panics per controller
 - Stability Level: STABLE
+- Dimensions:
+  - `controller` — The name of the controller that owns the reconcile loop.
 
 ### `controller_runtime_reconcile_errors_total`
 Total number of reconciliation errors per controller
 - Stability Level: STABLE
+- Dimensions:
+  - `controller` — The name of the controller that owns the reconcile loop.
 
 ### `controller_runtime_max_concurrent_reconciles`
 Maximum number of concurrent reconciles per controller
 - Stability Level: STABLE
+- Dimensions:
+  - `controller` — The name of the controller that owns the reconcile loop.
 
 ### `controller_runtime_conversion_webhook_panics_total`
 Total number of conversion webhook panics
@@ -469,36 +653,60 @@ Total number of conversion webhook panics
 ### `controller_runtime_active_workers`
 Number of currently used workers per controller
 - Stability Level: STABLE
+- Dimensions:
+  - `controller` — The name of the controller that owns the reconcile loop.
 
 ## Workqueue Metrics
 
 ### `workqueue_work_duration_seconds`
 How long in seconds processing an item from workqueue takes.
 - Stability Level: STABLE
+- Dimensions:
+  - `name`
+  - `controller` — The name of the controller that emitted the metric.
 
 ### `workqueue_unfinished_work_seconds`
 How many seconds of work has been done that is in progress and hasn't been observed by work_duration. Large values indicate stuck threads. One can deduce the number of stuck threads by observing the rate at which this increases.
 - Stability Level: STABLE
+- Dimensions:
+  - `name`
+  - `controller` — The name of the controller that emitted the metric.
 
 ### `workqueue_retries_total`
 Total number of retries handled by workqueue
 - Stability Level: STABLE
+- Dimensions:
+  - `name`
+  - `controller` — The name of the controller that emitted the metric.
 
 ### `workqueue_queue_duration_seconds`
 How long in seconds an item stays in workqueue before being requested
 - Stability Level: STABLE
+- Dimensions:
+  - `name`
+  - `controller` — The name of the controller that emitted the metric.
 
 ### `workqueue_longest_running_processor_seconds`
 How many seconds has the longest running processor for workqueue been running.
 - Stability Level: STABLE
+- Dimensions:
+  - `name`
+  - `controller` — The name of the controller that emitted the metric.
 
 ### `workqueue_depth`
 Current depth of workqueue by workqueue and priority
 - Stability Level: STABLE
+- Dimensions:
+  - `name`
+  - `controller` — The name of the controller that emitted the metric.
+  - `priority`
 
 ### `workqueue_adds_total`
 Total number of adds handled by workqueue
 - Stability Level: STABLE
+- Dimensions:
+  - `name`
+  - `controller` — The name of the controller that emitted the metric.
 
 ## Termination Metrics
 
@@ -543,30 +751,54 @@ Request latency in seconds. Broken down by verb, group, version, kind, and subre
 ### `aws_sdk_go_request_total`
 The total number of AWS SDK Go requests
 - Stability Level: STABLE
+- Dimensions:
+  - `service` — The AWS service the request was made to, e.g. `EC2`.
+  - `action` — The AWS API operation invoked, e.g. `DescribeSubnets`.
+  - `code` — The HTTP status code of the response, e.g. `200`, `503`.
 
 ### `aws_sdk_go_request_retry_count`
 The total number of AWS SDK Go retry attempts per request
 - Stability Level: STABLE
+- Dimensions:
+  - `service` — The AWS service the request was made to, e.g. `EC2`.
+  - `action` — The AWS API operation invoked, e.g. `DescribeSubnets`.
+  - `code` — The HTTP status code of the response, e.g. `200`, `503`.
 
 ### `aws_sdk_go_request_duration_seconds`
 Latency of AWS SDK Go requests
 - Stability Level: STABLE
+- Dimensions:
+  - `service` — The AWS service the request was made to, e.g. `EC2`.
+  - `action` — The AWS API operation invoked, e.g. `DescribeSubnets`.
+  - `code` — The HTTP status code of the response, e.g. `200`, `503`.
 
 ### `aws_sdk_go_request_attempt_total`
 The total number of AWS SDK Go request attempts
 - Stability Level: STABLE
+- Dimensions:
+  - `service` — The AWS service the request was made to, e.g. `EC2`.
+  - `action` — The AWS API operation invoked, e.g. `DescribeSubnets`.
+  - `code` — The HTTP status code of the response, e.g. `200`, `503`.
 
 ### `aws_sdk_go_request_attempt_duration_seconds`
 Latency of AWS SDK Go request attempts
 - Stability Level: STABLE
+- Dimensions:
+  - `service` — The AWS service the request was made to, e.g. `EC2`.
+  - `action` — The AWS API operation invoked, e.g. `DescribeSubnets`.
+  - `code` — The HTTP status code of the response, e.g. `200`, `503`.
 
 ## Leader Election Metrics
 
 ### `leader_election_slowpath_total`
 Total number of slow path exercised in renewing leader leases. 'name' is the string used to identify the lease. Please make sure to group by name.
 - Stability Level: STABLE
+- Dimensions:
+  - `name`
 
 ### `leader_election_master_status`
 Gauge of if the reporting system is master of the relevant lease, 0 indicates backup, 1 indicates master. 'name' is the string used to identify the lease. Please make sure to group by name.
 - Stability Level: STABLE
+- Dimensions:
+  - `name`
 
