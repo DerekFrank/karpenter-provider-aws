@@ -10,13 +10,6 @@ API to discover infrastructure and to launch and terminate nodes, and Amazon EC2
 per-account, per-Region request-rate limits. When your request rate exceeds a limit, Amazon EC2
 rejects the excess requests with the `RequestLimitExceeded` error (HTTP 503).
 
-The impact depends on which calls are throttled. Throttling of the hot-path calls Karpenter uses to
-launch capacity — `CreateFleet`, `CreateLaunchTemplate`, and `RunInstances` — is the most disruptive,
-because it directly delays or blocks node launches while pods wait to be scheduled. Throttling of the
-`Describe*` discovery and refresh calls is less severe but still matters: Karpenter's cached view of
-your subnets, security groups, and AMIs becomes stale, which slows the propagation of configuration
-changes.
-
 The volume of these calls is not fixed. It scales with the number of `EC2NodeClass`es and clusters
 you run, how often your cluster scales up and down, and the Karpenter version you run, so a large
 enough fleet can generate enough requests to be throttled. Because this volume can scale, you should

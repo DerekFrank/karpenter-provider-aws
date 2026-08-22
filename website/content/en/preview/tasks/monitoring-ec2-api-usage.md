@@ -10,13 +10,6 @@ API to discover infrastructure and to launch and terminate nodes, and Amazon EC2
 per-account, per-Region request-rate limits. When your request rate exceeds a limit, Amazon EC2
 rejects the excess requests with the `RequestLimitExceeded` error (HTTP 503).
 
-The impact depends on which calls are throttled. Throttling of the hot-path calls Karpenter uses to
-launch capacity — `CreateFleet`, `CreateLaunchTemplate`, and `RunInstances` — is the most disruptive,
-because it directly delays or blocks node launches while pods wait to be scheduled. Throttling of the
-`Describe*` discovery and refresh calls is less severe but still matters: Karpenter's cached view of
-your subnets, security groups, and AMIs becomes stale, which slows the propagation of configuration
-changes.
-
 The volume of these calls is not fixed. It scales with the number of `EC2NodeClass`es and clusters
 you run, how often your cluster scales up and down, and the Karpenter version you run, so a large
 enough fleet can generate enough requests to be throttled. Because this volume can scale, you should
@@ -101,17 +94,23 @@ limits. Use a multi-account architecture where clusters are isolated by account 
 across multiple accounts' limits. See the multi-account guidance in the
 [AWS Well-Architected Framework](https://docs.aws.amazon.com/wellarchitected/latest/framework/welcome.html).
 
-### Increase Karpenter's refresh intervals
+## Increasing refresh intervals as a workaround
+
+{{% alert title="Warning" color="warning" %}}
+Increasing these refresh intervals is a workaround, not a recommended configuration — avoid relying on
+it. It reduces `Describe*` call volume only by trading away freshness: Karpenter takes longer to
+observe changes such as a subnet's available IP capacity or a new AMI, and may act on stale data as a
+result. Prefer the best practices above and an appropriately sized request-rate limit, and reach for
+this only as a temporary measure while you address the underlying call volume.
+{{% /alert %}}
 
 Karpenter refreshes each `EC2NodeClass`'s cached subnet, security group, and AMI data from Amazon EC2
-on an interval. You can increase these intervals to reduce the associated `Describe*` call volume (see
-the [Settings reference]({{< relref "../reference/settings" >}})):
+on an interval. These intervals are configurable (see the
+[Settings reference]({{< relref "../reference/settings" >}})):
 
 * `SUBNET_REFRESH_INTERVAL` — how often subnet data is refreshed (bounds `DescribeSubnets`). Defaults
   to `1m`.
 * `AMI_REFRESH_INTERVAL` — how often AMI data is refreshed (bounds `DescribeImages`). Defaults to `1m`.
 
 Increasing an interval reduces that call's steady-state rate proportionally — for example, changing an
-interval from `1m` to `5m` reduces that call's rate by roughly 5x. The trade-off is staleness: a
-longer interval means Karpenter takes longer to observe changes (such as a subnet's available IP
-capacity, or a new AMI).
+interval from `1m` to `5m` reduces that call's rate by roughly 5x.
