@@ -24,9 +24,18 @@ import (
 const (
 	cloudProviderSubsystem = "cloudprovider"
 	instanceTypeLabel      = "instance_type"
-	capacityTypeLabel      = "capacity_type"
-	zoneLabel              = "zone"
+	// capacityTypeLabel and zoneLabel alias the shared core dimensions so their
+	// canonical descriptions live on metrics.CapacityType / metrics.Zone.
+	capacityTypeLabel = metrics.CapacityTypeLabel
+	zoneLabel         = metrics.ZoneLabel
 )
+
+// InstanceType is the canonical description of the instance_type dimension used
+// across the provider's cloudprovider metrics.
+var InstanceType = metrics.Label{
+	Name: instanceTypeLabel,
+	Help: "The EC2 instance type, e.g. `m5.large`.",
+}
 
 var (
 	InstanceTypeOfferingAvailable = opmetrics.NewPrometheusGauge(

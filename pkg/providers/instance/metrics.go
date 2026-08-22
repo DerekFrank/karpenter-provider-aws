@@ -24,9 +24,16 @@ import (
 
 const (
 	cloudProviderSubsystem = "cloudprovider"
-	zoneLabel              = "zone"
-	zoneIDLabel            = "zone_id"
+	// zoneLabel aliases the shared core zone dimension.
+	zoneLabel   = metrics.ZoneLabel
+	zoneIDLabel = "zone_id"
 )
+
+// ZoneID describes the zone_id dimension.
+var ZoneID = metrics.Label{
+	Name: zoneIDLabel,
+	Help: "The availability zone ID of the instance, e.g. `usw2-az1` (stable across accounts, unlike the zone name).",
+}
 
 var (
 	// Counts per-offering CreateFleet errors, not per-NodeClaim attempts: one CreateFleet

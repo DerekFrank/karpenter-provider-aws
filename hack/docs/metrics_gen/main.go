@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/awslabs/operatorpkg/serrors"
@@ -39,6 +40,72 @@ type metricInfo struct {
 	subsystem string
 	name      string
 	help      string
+	labels    []string
+}
+
+var (
+	// stringSymbols maps a package-level string constant/variable name to its value
+	// (e.g. ReasonLabel -> "reason"), used to resolve metric label names that are
+	// declared as named constants rather than string literals.
+	stringSymbols = map[string]string{}
+	// sliceSymbols maps a package-level []string constant/variable name to its resolved
+	// values (e.g. the aws-sdk-go-prometheus `labels` var -> {"service","action","code"}).
+	sliceSymbols = map[string][]string{}
+	// ambiguous names resolved to conflicting values across packages; treated as unresolvable.
+	ambiguousStrings = map[string]bool{}
+	ambiguousSlices  = map[string]bool{}
+
+	// labelRegistry maps a resolved label name (dimension key) to its documentation,
+	// sourced from metrics.Label{...} var declarations across the scanned packages
+	// (both karpenter core and karpenter-provider-aws). It is the source of truth for
+	// per-dimension help text and stable values.
+	labelRegistry = map[string]labelInfo{}
+)
+
+// labelInfo is the resolved documentation for a metric dimension.
+type labelInfo struct {
+	help   string
+	values []string
+}
+
+// labelInjections supplies documentation for dimensions of THIRD-PARTY metrics
+// whose labels cannot be described with a metrics.Label in karpenter code
+// (aws-sdk-go-prometheus, controller-runtime, client-go). It is keyed by
+// subsystem first so that a name reused with different meanings across subsystems
+// (e.g. `code` is an HTTP status here but a Kubernetes eviction response elsewhere)
+// resolves correctly. All values are hardcoded, well-known constants for the
+// respective third-party library.
+var labelInjections = map[string]map[string]labelInfo{
+	"aws_sdk_go": {
+		"service": {help: "The AWS service the request was made to, e.g. `EC2`."},
+		"action":  {help: "The AWS API operation invoked, e.g. `DescribeSubnets`."},
+		"code":    {help: "The HTTP status code of the response, e.g. `200`, `503`."},
+	},
+	"controller_runtime": {
+		"controller": {help: "The name of the controller that owns the reconcile loop."},
+		"name":       {help: "The name of the controller instance."},
+		"result":     {help: "The outcome of the reconcile call.", values: []string{"success", "error", "requeue", "requeue_after"}},
+	},
+	"client_go": {
+		"verb":   {help: "The HTTP verb of the Kubernetes API request, e.g. `GET`, `POST`."},
+		"code":   {help: "The HTTP status code of the Kubernetes API response."},
+		"method": {help: "The HTTP method of the Kubernetes API request."},
+		"host":   {help: "The Kubernetes API server host the request was made to."},
+	},
+}
+
+// describeLabel resolves documentation for a metric's dimension, preferring a
+// subsystem-scoped third-party injection, then the code-sourced label registry.
+func describeLabel(subsystem, name string) (labelInfo, bool) {
+	if inj, ok := labelInjections[subsystem]; ok {
+		if li, ok := inj[name]; ok {
+			return li, true
+		}
+	}
+	if li, ok := labelRegistry[name]; ok {
+		return li, true
+	}
+	return labelInfo{}, false
 }
 
 var (
@@ -71,11 +138,17 @@ func main() {
 	if flag.NArg() < 2 {
 		log.Fatalf("Usage: %s path/to/metrics/controller path/to/metrics/controller2 path/to/markdown.md", os.Args[0])
 	}
-	var allMetrics []metricInfo
+	var allPackages []*ast.Package
 	for i := 0; i < flag.NArg()-1; i++ {
-		packages := getPackages(flag.Arg(i))
-		allMetrics = append(allMetrics, getMetricsFromPackages(packages...)...)
+		allPackages = append(allPackages, getPackages(flag.Arg(i))...)
 	}
+	// Build symbol tables for string and []string constants/variables across all
+	// packages so we can resolve metric label names declared as named identifiers.
+	collectSymbols(allPackages)
+	// Build the label documentation registry from metrics.Label{...} declarations
+	// (must run after collectSymbols so Name/Values identifiers resolve).
+	collectLabels(allPackages)
+	allMetrics := getMetricsFromPackages(allPackages...)
 
 	// The operatorpkg status and events controllers dynamically create per-object metrics
 	// at runtime based on the Go type parameter passed to status.NewController[T]().
@@ -164,9 +237,41 @@ description: >
 		default:
 			fmt.Fprintf(f, "- Stability Level: %s\n", "ALPHA")
 		}
+		if dims := formatDimensions(metric); dims != "" {
+			fmt.Fprintf(f, "- Dimensions:%s\n", dims)
+		}
 		fmt.Fprintln(f)
 	}
 
+}
+
+// formatDimensions renders a metric's dimensions as a markdown sub-list. Each
+// dimension carries its help text (sourced from the code-defined metrics.Label or
+// a third-party injection) and, where the set of values is known and stable, the
+// list of values. The returned string begins with a leading newline so it renders
+// as a nested list under the "- Dimensions:" line.
+func formatDimensions(m metricInfo) string {
+	if len(m.labels) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, l := range m.labels {
+		b.WriteString(fmt.Sprintf("\n  - `%s`", l))
+		info, ok := describeLabel(m.subsystem, l)
+		if !ok {
+			continue
+		}
+		if info.help != "" {
+			b.WriteString(fmt.Sprintf(" — %s", info.help))
+		}
+		if len(info.values) > 0 {
+			quoted := lo.Map(info.values, func(v string, _ int) string {
+				return fmt.Sprintf("`%s`", v)
+			})
+			b.WriteString(fmt.Sprintf(" (values: %s)", strings.Join(quoted, ", ")))
+		}
+	}
+	return b.String()
 }
 
 func getPackages(root string) []*ast.Package {
@@ -237,8 +342,8 @@ func bySubsystem(metrics []metricInfo) func(i int, j int) bool {
 		"ec2nodeclass_status_condition": 3,
 		"ec2nodeclass_termination":      3,
 		"status_condition":              -1,
-		"termination":                  -1,
-		"workqueue":                    -1,
+		"termination":                   -1,
+		"workqueue":                     -1,
 		"client_go":                     -1,
 		"aws_sdk_go":                    -1,
 		"leader_election":               -2,
@@ -356,17 +461,24 @@ func metricFromCallExpr(ce *ast.CallExpr) (metricInfo, bool) {
 			value = val.Value
 		case *ast.SelectorExpr:
 			selector := fmt.Sprintf("%s.%s", val.X, val.Sel)
-			v, err := getIdentMapping(selector)
-			if err != nil {
+			// Prefer the curated identifier mapping (which intentionally overrides
+			// some values, e.g. pluralizing subsystems), then fall back to the
+			// resolved package-level string constant.
+			if v, err := getIdentMapping(selector); err == nil {
+				value = v
+			} else if s, ok := resolveStringExpr(val); ok {
+				value = s
+			} else {
 				log.Fatalf("unresolvable selector %s for key %s: %s", selector, key, err)
 			}
-			value = v
 		case *ast.Ident:
-			v, err := getIdentMapping(val.String())
-			if err != nil {
+			if v, err := getIdentMapping(val.String()); err == nil {
+				value = v
+			} else if s, ok := resolveStringExpr(val); ok {
+				value = s
+			} else {
 				log.Fatalf("unresolvable identifier %q for key %s: %s", val.String(), key, err)
 			}
-			value = v
 		case *ast.BinaryExpr:
 			value = getBinaryExpr(val)
 		default:
@@ -377,12 +489,271 @@ func metricFromCallExpr(ce *ast.CallExpr) (metricInfo, bool) {
 			return r == '"'
 		})
 	}
+	// The label names (dimensions) are the argument immediately after the opts
+	// argument: prometheus.New*Vec(opts, labels) and
+	// opmetrics.NewPrometheus*(registry, opts, labels). Non-vector metrics have no
+	// such argument. Resolution is best-effort: metrics whose labels cannot be fully
+	// resolved simply omit the Dimensions line rather than emit partial/incorrect data.
+	var labels []string
+	if labelsIdx := optsIdx + 1; len(ce.Args) > labelsIdx {
+		if resolved, ok := resolveLabels(ce.Args[labelsIdx]); ok {
+			labels = resolved
+		}
+	}
 	return metricInfo{
 		namespace: keyValuePairs["Namespace"],
 		subsystem: keyValuePairs["Subsystem"],
 		name:      keyValuePairs["Name"],
 		help:      keyValuePairs["Help"],
+		labels:    labels,
 	}, true
+}
+
+// collectSymbols scans all package-level constant and variable declarations across
+// the parsed packages, recording string-valued names (for label constants such as
+// ReasonLabel = "reason") and []string-valued names (for shared label slices such as
+// the aws-sdk-go-prometheus `labels` var). Names that resolve to conflicting values
+// across packages are marked ambiguous and treated as unresolvable.
+func collectSymbols(packages []*ast.Package) {
+	// Pass 1: string constants/variables.
+	forEachValueSpec(packages, func(name string, value ast.Expr) {
+		if s, ok := stringLiteralValue(value); ok {
+			if existing, seen := stringSymbols[name]; seen && existing != s {
+				ambiguousStrings[name] = true
+				return
+			}
+			stringSymbols[name] = s
+		}
+	})
+	// Pass 1b: resolve alias declarations such as `const X = Y` or
+	// `const X = pkg.Y`, where Y is itself a known string symbol. This lets label
+	// name consts that dedupe to a shared const (e.g. metricLabelController =
+	// metrics.ControllerLabel) resolve to their underlying value. Iterate to a
+	// small fixpoint to handle aliases of aliases.
+	for range 3 {
+		changed := false
+		forEachValueSpec(packages, func(name string, value ast.Expr) {
+			if _, seen := stringSymbols[name]; seen {
+				return
+			}
+			switch value.(type) {
+			case *ast.Ident, *ast.SelectorExpr:
+				if s, ok := resolveStringExpr(value); ok {
+					stringSymbols[name] = s
+					changed = true
+				}
+			}
+		})
+		if !changed {
+			break
+		}
+	}
+	// Pass 2: []string composite literals (may reference the string symbols above).
+	forEachValueSpec(packages, func(name string, value ast.Expr) {
+		cl, ok := value.(*ast.CompositeLit)
+		if !ok {
+			return
+		}
+		vals, ok := stringSliceFromCompositeLit(cl)
+		if !ok {
+			return
+		}
+		if existing, seen := sliceSymbols[name]; seen && !slices.Equal(existing, vals) {
+			ambiguousSlices[name] = true
+			return
+		}
+		sliceSymbols[name] = vals
+	})
+}
+
+// collectLabels scans package-level var declarations for metrics.Label{...}
+// composite literals and records each label's help text and stable values keyed by
+// its resolved Name. This is the code-sourced registry the docs generator uses to
+// annotate each metric dimension. Entries are merged by name: an entry that carries
+// help text is preferred over one that does not, so a fully-documented shared Label
+// wins over a bare reference elsewhere.
+func collectLabels(packages []*ast.Package) {
+	forEachValueSpec(packages, func(_ string, value ast.Expr) {
+		cl, ok := value.(*ast.CompositeLit)
+		if !ok || !isLabelType(cl.Type) {
+			return
+		}
+		var name, help string
+		var values []string
+		haveName := false
+		for _, el := range cl.Elts {
+			kv, ok := el.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			switch fmt.Sprintf("%s", kv.Key) {
+			case "Name":
+				if s, ok := resolveStringExpr(kv.Value); ok {
+					name, haveName = s, true
+				}
+			case "Help":
+				if s, ok := resolveStringExpr(kv.Value); ok {
+					help = s
+				}
+			case "Values":
+				if cl2, ok := kv.Value.(*ast.CompositeLit); ok {
+					if vals, ok := stringSliceFromCompositeLit(cl2); ok {
+						values = vals
+					}
+				} else if vals, ok := resolveLabels(kv.Value); ok {
+					values = vals
+				}
+			}
+		}
+		if !haveName {
+			return
+		}
+		if existing, seen := labelRegistry[name]; seen && !(existing.help == "" && help != "") {
+			return
+		}
+		labelRegistry[name] = labelInfo{help: help, values: values}
+	})
+}
+
+// isLabelType reports whether a composite literal's type is metrics.Label (either
+// the bare Label identifier, when declared in package metrics, or the qualified
+// metrics.Label selector used everywhere else).
+func isLabelType(t ast.Expr) bool {
+	switch v := t.(type) {
+	case *ast.Ident:
+		return v.Name == "Label"
+	case *ast.SelectorExpr:
+		return v.Sel.Name == "Label"
+	}
+	return false
+}
+
+// forEachValueSpec invokes fn for every (name, value) pair in package-level const/var
+// declarations across the given packages.
+func forEachValueSpec(packages []*ast.Package, fn func(name string, value ast.Expr)) {
+	for _, pkg := range packages {
+		for _, file := range pkg.Files {
+			for _, decl := range file.Decls {
+				gd, ok := decl.(*ast.GenDecl)
+				if !ok || (gd.Tok != token.CONST && gd.Tok != token.VAR) {
+					continue
+				}
+				for _, spec := range gd.Specs {
+					vs, ok := spec.(*ast.ValueSpec)
+					if !ok {
+						continue
+					}
+					for i, nm := range vs.Names {
+						if i < len(vs.Values) {
+							fn(nm.Name, vs.Values[i])
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// stringLiteralValue returns the unquoted value of a string literal expression.
+// It uses strconv.Unquote so that only the delimiters are removed (and escapes
+// are decoded); a naive trim would strip backticks that are part of the content,
+// e.g. help text like "... or `expired`".
+func stringLiteralValue(expr ast.Expr) (string, bool) {
+	bl, ok := expr.(*ast.BasicLit)
+	if !ok || bl.Kind != token.STRING {
+		return "", false
+	}
+	s, err := strconv.Unquote(bl.Value)
+	if err != nil {
+		return "", false
+	}
+	return s, true
+}
+
+// stringSliceFromCompositeLit resolves a []string composite literal to its string
+// values, resolving element identifiers via the string symbol table.
+func stringSliceFromCompositeLit(cl *ast.CompositeLit) ([]string, bool) {
+	if at, ok := cl.Type.(*ast.ArrayType); ok {
+		if id, ok := at.Elt.(*ast.Ident); !ok || id.Name != "string" {
+			return nil, false
+		}
+	} else if cl.Type != nil {
+		return nil, false
+	}
+	out := make([]string, 0, len(cl.Elts))
+	for _, el := range cl.Elts {
+		s, ok := resolveStringExpr(el)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, s)
+	}
+	return out, true
+}
+
+// resolveLabels resolves a metric's label-names argument to a slice of label names,
+// handling both an inline []string composite literal and a reference to a named
+// []string variable.
+func resolveLabels(expr ast.Expr) ([]string, bool) {
+	switch v := expr.(type) {
+	case *ast.CompositeLit:
+		return stringSliceFromCompositeLit(v)
+	case *ast.Ident:
+		if ambiguousSlices[v.Name] {
+			return nil, false
+		}
+		if s, ok := sliceSymbols[v.Name]; ok {
+			return s, true
+		}
+	case *ast.SelectorExpr:
+		if ambiguousSlices[v.Sel.Name] {
+			return nil, false
+		}
+		if s, ok := sliceSymbols[v.Sel.Name]; ok {
+			return s, true
+		}
+	}
+	return nil, false
+}
+
+// resolveStringExpr resolves a single expression to a string value, handling string
+// literals and references to named string constants (bare or package-qualified).
+func resolveStringExpr(expr ast.Expr) (string, bool) {
+	switch v := expr.(type) {
+	case *ast.BasicLit:
+		return stringLiteralValue(v)
+	case *ast.Ident:
+		if ambiguousStrings[v.Name] {
+			return "", false
+		}
+		if s, ok := stringSymbols[v.Name]; ok {
+			return s, true
+		}
+	case *ast.SelectorExpr:
+		if ambiguousStrings[v.Sel.Name] {
+			return "", false
+		}
+		if s, ok := stringSymbols[v.Sel.Name]; ok {
+			return s, true
+		}
+	case *ast.CallExpr:
+		// Unwrap string(X) conversions, used when a Label value references a
+		// string-based named type such as disruption.Decision or v1.ConsolidationPolicy.
+		if fn, ok := v.Fun.(*ast.Ident); ok && fn.Name == "string" && len(v.Args) == 1 {
+			return resolveStringExpr(v.Args[0])
+		}
+	case *ast.BinaryExpr:
+		// Resolve string concatenation ("a" + "b" + const), used to wrap long
+		// Label.Help text across multiple source lines.
+		if v.Op == token.ADD {
+			if l, ok := resolveStringExpr(v.X); ok {
+				if r, ok := resolveStringExpr(v.Y); ok {
+					return l + r, true
+				}
+			}
+		}
+	}
+	return "", false
 }
 
 func getFuncPackage(fun ast.Expr) string {

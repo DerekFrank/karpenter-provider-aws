@@ -27,6 +27,13 @@ const (
 	batcherNameLabel = "batcher"
 )
 
+// BatcherDim describes the batcher dimension identifying which request batcher
+// the metric belongs to.
+var BatcherDim = metrics.Label{
+	Name: batcherNameLabel,
+	Help: "The name of the request batcher the metric was recorded for, e.g. `create_fleet`, `terminate_instances`.",
+}
+
 // SizeBuckets returns a []float64 of default threshold values for size histograms.
 // Each returned slice is new and may be modified without impacting other bucket definitions.
 func SizeBuckets() []float64 {
