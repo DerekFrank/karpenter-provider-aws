@@ -12,7 +12,12 @@ Karpenter makes several metrics available in Prometheus format to allow monitori
 Score of balanced consolidation moves. Labeled by decision, NodePool, and policy.
 - Stability Level: ALPHA
 - Dimensions:
-  - `decision` — The disruption decision taken for the candidate(s). (values: `no-op`, `replace`, `delete`, `approved`, `rejected`)
+  - `decision` — The disruption decision taken for the candidate(s).
+    - `no-op` — No disruption action was taken.
+    - `replace` — The candidate(s) were replaced with more efficient capacity.
+    - `delete` — The candidate(s) were deleted without replacement.
+    - `approved` — The disruption decision was approved for execution.
+    - `rejected` — The disruption decision was rejected before execution.
   - `nodepool` — The name of the NodePool that owns the resource.
   - `policy` — The NodePool consolidation policy in effect for the move.
 
@@ -20,7 +25,12 @@ Score of balanced consolidation moves. Labeled by decision, NodePool, and policy
 Number of balanced consolidation moves. Labeled by decision, NodePool, and policy.
 - Stability Level: ALPHA
 - Dimensions:
-  - `decision` — The disruption decision taken for the candidate(s). (values: `no-op`, `replace`, `delete`, `approved`, `rejected`)
+  - `decision` — The disruption decision taken for the candidate(s).
+    - `no-op` — No disruption action was taken.
+    - `replace` — The candidate(s) were replaced with more efficient capacity.
+    - `delete` — The candidate(s) were deleted without replacement.
+    - `approved` — The disruption decision was approved for execution.
+    - `rejected` — The disruption decision was rejected before execution.
   - `nodepool` — The name of the NodePool that owns the resource.
   - `policy` — The NodePool consolidation policy in effect for the move.
 
@@ -41,7 +51,10 @@ Number of unhealthy nodeclaims disrupted in total by Karpenter. Labeled by condi
 - Dimensions:
   - `condition`
   - `nodepool` — The name of the NodePool that owns the resource.
-  - `capacity_type` — The capacity type of the instance. (values: `on-demand`, `spot`, `reserved`)
+  - `capacity_type` — The capacity type of the instance.
+    - `on-demand` — On-demand capacity.
+    - `spot` — Spot capacity, which can be reclaimed by the cloud provider.
+    - `reserved` — Reserved capacity, backed by a capacity reservation.
   - `image_id`
 
 ### `karpenter_nodeclaims_termination_duration_seconds`
@@ -55,7 +68,10 @@ Number of nodeclaims terminated in total by Karpenter. Labeled by the owning nod
 - Stability Level: STABLE
 - Dimensions:
   - `nodepool` — The name of the NodePool that owns the resource.
-  - `capacity_type` — The capacity type of the instance. (values: `on-demand`, `spot`, `reserved`)
+  - `capacity_type` — The capacity type of the instance.
+    - `on-demand` — On-demand capacity.
+    - `spot` — Spot capacity, which can be reclaimed by the cloud provider.
+    - `reserved` — Reserved capacity, backed by a capacity reservation.
   - `zone` — The availability zone of the instance.
 
 ### `karpenter_nodeclaims_instance_termination_duration_seconds`
@@ -70,9 +86,18 @@ Number of nodeclaims disrupted in total by Karpenter. Labeled by reason the node
 - Dimensions:
   - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
   - `nodepool` — The name of the NodePool that owns the resource.
-  - `capacity_type` — The capacity type of the instance. (values: `on-demand`, `spot`, `reserved`)
-  - `consolidation_policy` — The NodePool consolidation policy in effect. (values: `WhenEmpty`, `WhenEmptyOrUnderutilized`, `Balanced`)
-  - `termination_mode` — The termination mode used to disrupt the node. (values: `graceful`, `eventual`, `forceful`)
+  - `capacity_type` — The capacity type of the instance.
+    - `on-demand` — On-demand capacity.
+    - `spot` — Spot capacity, which can be reclaimed by the cloud provider.
+    - `reserved` — Reserved capacity, backed by a capacity reservation.
+  - `consolidation_policy` — The NodePool consolidation policy in effect.
+    - `WhenEmpty` — Consolidate only nodes with no workload pods.
+    - `WhenEmptyOrUnderutilized` — Consolidate empty nodes and underutilized nodes.
+    - `Balanced` — Consolidate using the balanced algorithm.
+  - `termination_mode` — The termination mode used to disrupt the node.
+    - `graceful` — Graceful termination that respects the node's disruption budget and drains pods.
+    - `eventual` — Eventual termination once the node's terminationGracePeriod elapses.
+    - `forceful` — Forceful termination that deletes the node immediately.
 
 ### `karpenter_nodeclaims_created_total`
 Number of nodeclaims created in total by Karpenter. Labeled by reason the nodeclaim was created, the owning nodepool, and if min values was relaxed for this nodeclaim.
@@ -102,7 +127,17 @@ The count of transitions of a given object, type and status.
 - Stability Level: BETA
 - Dimensions:
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
+    - `Launched` — The instance backing the NodeClaim has been launched with the cloud provider.
+    - `Registered` — The launched node has registered with the cluster.
+    - `Initialized` — The registered node has finished initializing and is ready for workloads.
+    - `Consolidatable` — The NodeClaim is currently eligible for consolidation.
+    - `Drifted` — The NodeClaim has drifted from its desired specification.
+    - `Drained` — The node has been drained of pods during termination.
+    - `VolumesDetached` — The node's volumes have been detached during termination.
+    - `InstanceTerminating` — The backing instance is terminating.
+    - `ConsistentStateFound` — A consistent instance state was observed before disruption.
+    - `DisruptionReason` — Set while the NodeClaim is being disrupted; records the disruption reason.
+  - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
 
 ### `operator_nodeclaim_status_condition_transition_seconds`
@@ -110,8 +145,18 @@ The amount of time a condition was in a given state before transitioning. e.g. A
 - Stability Level: BETA
 - Dimensions:
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
-  - `to_status` — The status the condition transitioned to, for transition metrics.
+    - `Launched` — The instance backing the NodeClaim has been launched with the cloud provider.
+    - `Registered` — The launched node has registered with the cluster.
+    - `Initialized` — The registered node has finished initializing and is ready for workloads.
+    - `Consolidatable` — The NodeClaim is currently eligible for consolidation.
+    - `Drifted` — The NodeClaim has drifted from its desired specification.
+    - `Drained` — The node has been drained of pods during termination.
+    - `VolumesDetached` — The node's volumes have been detached during termination.
+    - `InstanceTerminating` — The backing instance is terminating.
+    - `ConsistentStateFound` — A consistent instance state was observed before disruption.
+    - `DisruptionReason` — Set while the NodeClaim is being disrupted; records the disruption reason.
+  - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+  - `to_status` — The status a condition transitioned to, for transition metrics.
 
 ### `operator_nodeclaim_status_condition_current_status_seconds`
 The current amount of time in seconds that a status condition has been in a specific state. Alarm := P99(Updated=Unknown) > 5 minutes
@@ -120,7 +165,17 @@ The current amount of time in seconds that a status condition has been in a spec
   - `namespace` — The namespace of the object the metric describes.
   - `name` — The name of the object the metric describes.
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
+    - `Launched` — The instance backing the NodeClaim has been launched with the cloud provider.
+    - `Registered` — The launched node has registered with the cluster.
+    - `Initialized` — The registered node has finished initializing and is ready for workloads.
+    - `Consolidatable` — The NodeClaim is currently eligible for consolidation.
+    - `Drifted` — The NodeClaim has drifted from its desired specification.
+    - `Drained` — The node has been drained of pods during termination.
+    - `VolumesDetached` — The node's volumes have been detached during termination.
+    - `InstanceTerminating` — The backing instance is terminating.
+    - `ConsistentStateFound` — A consistent instance state was observed before disruption.
+    - `DisruptionReason` — Set while the NodeClaim is being disrupted; records the disruption reason.
+  - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
 
 ### `operator_nodeclaim_status_condition_count`
@@ -130,7 +185,17 @@ The number of a condition for a given object, type and status. e.g. Alarm := Ava
   - `namespace` — The namespace of the object the metric describes.
   - `name` — The name of the object the metric describes.
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
+    - `Launched` — The instance backing the NodeClaim has been launched with the cloud provider.
+    - `Registered` — The launched node has registered with the cluster.
+    - `Initialized` — The registered node has finished initializing and is ready for workloads.
+    - `Consolidatable` — The NodeClaim is currently eligible for consolidation.
+    - `Drifted` — The NodeClaim has drifted from its desired specification.
+    - `Drained` — The node has been drained of pods during termination.
+    - `VolumesDetached` — The node's volumes have been detached during termination.
+    - `InstanceTerminating` — The backing instance is terminating.
+    - `ConsistentStateFound` — A consistent instance state was observed before disruption.
+    - `DisruptionReason` — Set while the NodeClaim is being disrupted; records the disruption reason.
+  - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
 
 ## Nodes Metrics
@@ -194,57 +259,6 @@ Number of nodes created in total by Karpenter. Labeled by owning nodepool and zo
 ### `karpenter_nodes_allocatable`
 Node allocatable are the resources allocatable by nodes.
 - Stability Level: BETA
-
-## Node Termination Metrics
-
-### `operator_node_termination_duration_seconds`
-The amount of time taken by an object to terminate completely.
-- Stability Level: BETA
-
-### `operator_node_termination_current_time_seconds`
-The current amount of time in seconds that an object has been in terminating state.
-- Stability Level: BETA
-- Dimensions:
-  - `namespace` — The namespace of the object the metric describes.
-  - `name` — The name of the object the metric describes.
-
-## Node Status Condition Metrics
-
-### `operator_node_status_condition_transitions_total`
-The count of transitions of a given object, type and status.
-- Stability Level: BETA
-- Dimensions:
-  - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
-  - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
-
-### `operator_node_status_condition_transition_seconds`
-The amount of time a condition was in a given state before transitioning. e.g. Alarm := P99(Updated=False) > 5 minutes
-- Stability Level: BETA
-- Dimensions:
-  - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
-  - `to_status` — The status the condition transitioned to, for transition metrics.
-
-### `operator_node_status_condition_current_status_seconds`
-The current amount of time in seconds that a status condition has been in a specific state. Alarm := P99(Updated=Unknown) > 5 minutes
-- Stability Level: BETA
-- Dimensions:
-  - `namespace` — The namespace of the object the metric describes.
-  - `name` — The name of the object the metric describes.
-  - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
-  - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
-
-### `operator_node_status_condition_count`
-The number of a condition for a given object, type and status. e.g. Alarm := Available=False > 0
-- Stability Level: BETA
-- Dimensions:
-  - `namespace` — The namespace of the object the metric describes.
-  - `name` — The name of the object the metric describes.
-  - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
-  - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
 
 ## Pods Metrics
 
@@ -321,9 +335,18 @@ Number of pod disruptions initiated in total by Karpenter, incremented by the re
 - Dimensions:
   - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
   - `nodepool` — The name of the NodePool that owns the resource.
-  - `capacity_type` — The capacity type of the instance. (values: `on-demand`, `spot`, `reserved`)
-  - `consolidation_policy` — The NodePool consolidation policy in effect. (values: `WhenEmpty`, `WhenEmptyOrUnderutilized`, `Balanced`)
-  - `termination_mode` — The termination mode used to disrupt the node. (values: `graceful`, `eventual`, `forceful`)
+  - `capacity_type` — The capacity type of the instance.
+    - `on-demand` — On-demand capacity.
+    - `spot` — Spot capacity, which can be reclaimed by the cloud provider.
+    - `reserved` — Reserved capacity, backed by a capacity reservation.
+  - `consolidation_policy` — The NodePool consolidation policy in effect.
+    - `WhenEmpty` — Consolidate only nodes with no workload pods.
+    - `WhenEmptyOrUnderutilized` — Consolidate empty nodes and underutilized nodes.
+    - `Balanced` — Consolidate using the balanced algorithm.
+  - `termination_mode` — The termination mode used to disrupt the node.
+    - `graceful` — Graceful termination that respects the node's disruption budget and drains pods.
+    - `eventual` — Eventual termination once the node's terminationGracePeriod elapses.
+    - `forceful` — Forceful termination that deletes the node immediately.
 
 ### `karpenter_pods_bound_duration_seconds`
 The time from pod creation until the pod is bound.
@@ -349,7 +372,10 @@ The count of transitions of a given object, type and status.
 - Stability Level: BETA
 - Dimensions:
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
+    - `ValidationSucceeded` — The runtime-based configuration is valid for this NodePool.
+    - `NodeClassReady` — The underlying NodeClass was resolved and is reporting as Ready.
+    - `NodeRegistrationHealthy` — No misconfiguration is preventing successful node launch/registration.
+  - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
 
 ### `operator_nodepool_status_condition_transition_seconds`
@@ -357,8 +383,11 @@ The amount of time a condition was in a given state before transitioning. e.g. A
 - Stability Level: BETA
 - Dimensions:
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
-  - `to_status` — The status the condition transitioned to, for transition metrics.
+    - `ValidationSucceeded` — The runtime-based configuration is valid for this NodePool.
+    - `NodeClassReady` — The underlying NodeClass was resolved and is reporting as Ready.
+    - `NodeRegistrationHealthy` — No misconfiguration is preventing successful node launch/registration.
+  - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+  - `to_status` — The status a condition transitioned to, for transition metrics.
 
 ### `operator_nodepool_status_condition_current_status_seconds`
 The current amount of time in seconds that a status condition has been in a specific state. Alarm := P99(Updated=Unknown) > 5 minutes
@@ -367,7 +396,10 @@ The current amount of time in seconds that a status condition has been in a spec
   - `namespace` — The namespace of the object the metric describes.
   - `name` — The name of the object the metric describes.
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
+    - `ValidationSucceeded` — The runtime-based configuration is valid for this NodePool.
+    - `NodeClassReady` — The underlying NodeClass was resolved and is reporting as Ready.
+    - `NodeRegistrationHealthy` — No misconfiguration is preventing successful node launch/registration.
+  - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
 
 ### `operator_nodepool_status_condition_count`
@@ -377,7 +409,10 @@ The number of a condition for a given object, type and status. e.g. Alarm := Ava
   - `namespace` — The namespace of the object the metric describes.
   - `name` — The name of the object the metric describes.
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
+    - `ValidationSucceeded` — The runtime-based configuration is valid for this NodePool.
+    - `NodeClassReady` — The underlying NodeClass was resolved and is reporting as Ready.
+    - `NodeRegistrationHealthy` — No misconfiguration is preventing successful node launch/registration.
+  - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
 
 ## Ec2nodeclass Termination Metrics
@@ -400,7 +435,14 @@ The count of transitions of a given object, type and status.
 - Stability Level: BETA
 - Dimensions:
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
+    - `SubnetsReady` — The selected subnets were resolved.
+    - `SecurityGroupsReady` — The selected security groups were resolved.
+    - `AMIsReady` — The selected AMIs were resolved.
+    - `InstanceProfileReady` — The instance profile was resolved or created.
+    - `CapacityReservationsReady` — The selected capacity reservations were resolved.
+    - `ValidationSucceeded` — The EC2NodeClass configuration passed validation.
+    - `PlacementGroupReady` — The selected placement group was resolved.
+  - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
 
 ### `operator_ec2nodeclass_status_condition_transition_seconds`
@@ -408,8 +450,15 @@ The amount of time a condition was in a given state before transitioning. e.g. A
 - Stability Level: BETA
 - Dimensions:
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
-  - `to_status` — The status the condition transitioned to, for transition metrics.
+    - `SubnetsReady` — The selected subnets were resolved.
+    - `SecurityGroupsReady` — The selected security groups were resolved.
+    - `AMIsReady` — The selected AMIs were resolved.
+    - `InstanceProfileReady` — The instance profile was resolved or created.
+    - `CapacityReservationsReady` — The selected capacity reservations were resolved.
+    - `ValidationSucceeded` — The EC2NodeClass configuration passed validation.
+    - `PlacementGroupReady` — The selected placement group was resolved.
+  - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+  - `to_status` — The status a condition transitioned to, for transition metrics.
 
 ### `operator_ec2nodeclass_status_condition_current_status_seconds`
 The current amount of time in seconds that a status condition has been in a specific state. Alarm := P99(Updated=Unknown) > 5 minutes
@@ -418,7 +467,14 @@ The current amount of time in seconds that a status condition has been in a spec
   - `namespace` — The namespace of the object the metric describes.
   - `name` — The name of the object the metric describes.
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
+    - `SubnetsReady` — The selected subnets were resolved.
+    - `SecurityGroupsReady` — The selected security groups were resolved.
+    - `AMIsReady` — The selected AMIs were resolved.
+    - `InstanceProfileReady` — The instance profile was resolved or created.
+    - `CapacityReservationsReady` — The selected capacity reservations were resolved.
+    - `ValidationSucceeded` — The EC2NodeClass configuration passed validation.
+    - `PlacementGroupReady` — The selected placement group was resolved.
+  - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
 
 ### `operator_ec2nodeclass_status_condition_count`
@@ -428,7 +484,14 @@ The number of a condition for a given object, type and status. e.g. Alarm := Ava
   - `namespace` — The namespace of the object the metric describes.
   - `name` — The name of the object the metric describes.
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
+    - `SubnetsReady` — The selected subnets were resolved.
+    - `SecurityGroupsReady` — The selected security groups were resolved.
+    - `AMIsReady` — The selected AMIs were resolved.
+    - `InstanceProfileReady` — The instance profile was resolved or created.
+    - `CapacityReservationsReady` — The selected capacity reservations were resolved.
+    - `ValidationSucceeded` — The EC2NodeClass configuration passed validation.
+    - `PlacementGroupReady` — The selected placement group was resolved.
+  - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
 
 ## Voluntary Disruption Metrics
@@ -437,15 +500,24 @@ The number of a condition for a given object, type and status. e.g. Alarm := Ava
 The number of times that an enqueued disruption decision failed. Labeled by disruption method.
 - Stability Level: BETA
 - Dimensions:
-  - `decision` — The disruption decision taken for the candidate(s). (values: `no-op`, `replace`, `delete`, `approved`, `rejected`)
+  - `decision` — The disruption decision taken for the candidate(s).
+    - `no-op` — No disruption action was taken.
+    - `replace` — The candidate(s) were replaced with more efficient capacity.
+    - `delete` — The candidate(s) were deleted without replacement.
+    - `approved` — The disruption decision was approved for execution.
+    - `rejected` — The disruption decision was rejected before execution.
   - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
-  - `consolidation_type` — The consolidation algorithm that produced the decision. (values: `multi`, `single`)
+  - `consolidation_type` — The consolidation algorithm that produced the decision.
+    - `multi` — Consolidation that considers removing multiple nodes at once.
+    - `single` — Consolidation that considers removing a single node.
 
 ### `karpenter_voluntary_disruption_failed_validations_total`
 Number of candidates that were selected for disruption but failed validation. Labeled by consolidation type.
 - Stability Level: ALPHA
 - Dimensions:
-  - `consolidation_type` — The consolidation algorithm that produced the decision. (values: `multi`, `single`)
+  - `consolidation_type` — The consolidation algorithm that produced the decision.
+    - `multi` — Consolidation that considers removing multiple nodes at once.
+    - `single` — Consolidation that considers removing a single node.
 
 ### `karpenter_voluntary_disruption_eligible_nodes`
 Number of nodes eligible for disruption by Karpenter. Labeled by disruption reason.
@@ -457,31 +529,49 @@ Number of nodes eligible for disruption by Karpenter. Labeled by disruption reas
 Number of disruption decisions performed. Labeled by disruption decision, reason, and consolidation type.
 - Stability Level: STABLE
 - Dimensions:
-  - `decision` — The disruption decision taken for the candidate(s). (values: `no-op`, `replace`, `delete`, `approved`, `rejected`)
+  - `decision` — The disruption decision taken for the candidate(s).
+    - `no-op` — No disruption action was taken.
+    - `replace` — The candidate(s) were replaced with more efficient capacity.
+    - `delete` — The candidate(s) were deleted without replacement.
+    - `approved` — The disruption decision was approved for execution.
+    - `rejected` — The disruption decision was rejected before execution.
   - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
-  - `consolidation_type` — The consolidation algorithm that produced the decision. (values: `multi`, `single`)
+  - `consolidation_type` — The consolidation algorithm that produced the decision.
+    - `multi` — Consolidation that considers removing multiple nodes at once.
+    - `single` — Consolidation that considers removing a single node.
 
 ### `karpenter_voluntary_disruption_decisions_by_nodepool_total`
 Number of disruption decisions performed by nodepool. Labeled by nodepool name, disruption decision, reason, and consolidation type.
 - Stability Level: ALPHA
 - Dimensions:
   - `nodepool` — The name of the NodePool that owns the resource.
-  - `decision` — The disruption decision taken for the candidate(s). (values: `no-op`, `replace`, `delete`, `approved`, `rejected`)
+  - `decision` — The disruption decision taken for the candidate(s).
+    - `no-op` — No disruption action was taken.
+    - `replace` — The candidate(s) were replaced with more efficient capacity.
+    - `delete` — The candidate(s) were deleted without replacement.
+    - `approved` — The disruption decision was approved for execution.
+    - `rejected` — The disruption decision was rejected before execution.
   - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
-  - `consolidation_type` — The consolidation algorithm that produced the decision. (values: `multi`, `single`)
+  - `consolidation_type` — The consolidation algorithm that produced the decision.
+    - `multi` — Consolidation that considers removing multiple nodes at once.
+    - `single` — Consolidation that considers removing a single node.
 
 ### `karpenter_voluntary_disruption_decision_evaluation_duration_seconds`
 Duration of the disruption decision evaluation process in seconds. Labeled by method and consolidation type.
 - Stability Level: BETA
 - Dimensions:
   - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
-  - `consolidation_type` — The consolidation algorithm that produced the decision. (values: `multi`, `single`)
+  - `consolidation_type` — The consolidation algorithm that produced the decision.
+    - `multi` — Consolidation that considers removing multiple nodes at once.
+    - `single` — Consolidation that considers removing a single node.
 
 ### `karpenter_voluntary_disruption_consolidation_timeouts_total`
 Number of times the Consolidation algorithm has reached a timeout. Labeled by consolidation type.
 - Stability Level: BETA
 - Dimensions:
-  - `consolidation_type` — The consolidation algorithm that produced the decision. (values: `multi`, `single`)
+  - `consolidation_type` — The consolidation algorithm that produced the decision.
+    - `multi` — Consolidation that considers removing multiple nodes at once.
+    - `single` — Consolidation that considers removing a single node.
 
 ## Scheduler Metrics
 
@@ -623,7 +713,10 @@ Instance type offering estimated hourly price used when making informed decision
 - Stability Level: BETA
 - Dimensions:
   - `instance_type` — The EC2 instance type, e.g. `m5.large`.
-  - `capacity_type` — The capacity type of the instance. (values: `on-demand`, `spot`, `reserved`)
+  - `capacity_type` — The capacity type of the instance.
+    - `on-demand` — On-demand capacity.
+    - `spot` — Spot capacity, which can be reclaimed by the cloud provider.
+    - `reserved` — Reserved capacity, backed by a capacity reservation.
   - `zone` — The availability zone of the instance.
 
 ### `karpenter_cloudprovider_instance_type_offering_available`
@@ -631,7 +724,10 @@ Instance type offering availability, based on instance type, capacity type, and 
 - Stability Level: BETA
 - Dimensions:
   - `instance_type` — The EC2 instance type, e.g. `m5.large`.
-  - `capacity_type` — The capacity type of the instance. (values: `on-demand`, `spot`, `reserved`)
+  - `capacity_type` — The capacity type of the instance.
+    - `on-demand` — On-demand capacity.
+    - `spot` — Spot capacity, which can be reclaimed by the cloud provider.
+    - `reserved` — Reserved capacity, backed by a capacity reservation.
   - `zone` — The availability zone of the instance.
 
 ### `karpenter_cloudprovider_instance_type_memory_bytes`
@@ -659,7 +755,10 @@ Number of instance launch (CreateFleet offering) failures, dimensioned by availa
 - Dimensions:
   - `zone` — The availability zone of the instance.
   - `zone_id` — The availability zone ID of the instance, e.g. `usw2-az1` (stable across accounts, unlike the zone name).
-  - `capacity_type` — The capacity type of the instance. (values: `on-demand`, `spot`, `reserved`)
+  - `capacity_type` — The capacity type of the instance.
+    - `on-demand` — On-demand capacity.
+    - `spot` — Spot capacity, which can be reclaimed by the cloud provider.
+    - `reserved` — Reserved capacity, backed by a capacity reservation.
   - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
 
 ### `karpenter_cloudprovider_errors_total`
@@ -669,7 +768,10 @@ Total number of errors returned from CloudProvider calls.
   - `controller` — The name of the controller that emitted the metric.
   - `method` — The CloudProvider interface method that was called, e.g. `Create`, `Delete`, `Get`, `List`, `GetInstanceTypes`, `IsDrifted`.
   - `provider` — The name of the cloud provider implementation.
-  - `error` — The category of error returned by the CloudProvider call. (values: `NodeClaimNotFoundError`, `NodeClassNotReadyError`, `InsufficientCapacityError`)
+  - `error` — The category of error returned by the CloudProvider call.
+    - `NodeClaimNotFoundError` — The NodeClaim's backing instance was not found.
+    - `NodeClassNotReadyError` — The referenced NodeClass is not yet ready.
+    - `InsufficientCapacityError` — The cloud provider had insufficient capacity to fulfill the request.
 
 ### `karpenter_cloudprovider_duration_seconds`
 Duration of cloud provider method calls. Labeled by the controller, method name and provider.
@@ -706,7 +808,11 @@ Total number of reconciliations per controller
 - Stability Level: STABLE
 - Dimensions:
   - `controller` — The name of the controller that owns the reconcile loop.
-  - `result` — The outcome of the reconcile call. (values: `success`, `error`, `requeue`, `requeue_after`)
+  - `result` — The outcome of the reconcile call.
+    - `success`
+    - `error`
+    - `requeue`
+    - `requeue_after`
 
 ### `controller_runtime_reconcile_timeouts_total`
 Total number of reconciliation timeouts per controller
@@ -808,6 +914,9 @@ The amount of time taken by an object to terminate completely.
 - Dimensions:
   - `group` — The API group of the object the metric describes, e.g. `karpenter.sh`.
   - `kind` — The Kind of the object the metric describes, e.g. `NodeClaim`.
+    - `EC2NodeClass`
+    - `NodeClaim`
+    - `NodePool`
 
 ### `operator_termination_current_time_seconds`
 The current amount of time in seconds that an object has been in terminating state.
@@ -817,6 +926,9 @@ The current amount of time in seconds that an object has been in terminating sta
   - `name` — The name of the object the metric describes.
   - `group` — The API group of the object the metric describes, e.g. `karpenter.sh`.
   - `kind` — The Kind of the object the metric describes, e.g. `NodeClaim`.
+    - `EC2NodeClass`
+    - `NodeClaim`
+    - `NodePool`
 
 ## Status Condition Metrics
 
@@ -825,20 +937,64 @@ The count of transitions of a given object, type and status.
 - Stability Level: DEPRECATED
 - Dimensions:
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
+    - `SubnetsReady` — The selected subnets were resolved.
+    - `SecurityGroupsReady` — The selected security groups were resolved.
+    - `AMIsReady` — The selected AMIs were resolved.
+    - `InstanceProfileReady` — The instance profile was resolved or created.
+    - `CapacityReservationsReady` — The selected capacity reservations were resolved.
+    - `ValidationSucceeded` — The EC2NodeClass configuration passed validation.
+    - `PlacementGroupReady` — The selected placement group was resolved.
+    - `Launched` — The instance backing the NodeClaim has been launched with the cloud provider.
+    - `Registered` — The launched node has registered with the cluster.
+    - `Initialized` — The registered node has finished initializing and is ready for workloads.
+    - `Consolidatable` — The NodeClaim is currently eligible for consolidation.
+    - `Drifted` — The NodeClaim has drifted from its desired specification.
+    - `Drained` — The node has been drained of pods during termination.
+    - `VolumesDetached` — The node's volumes have been detached during termination.
+    - `InstanceTerminating` — The backing instance is terminating.
+    - `ConsistentStateFound` — A consistent instance state was observed before disruption.
+    - `DisruptionReason` — Set while the NodeClaim is being disrupted; records the disruption reason.
+    - `NodeClassReady` — The underlying NodeClass was resolved and is reporting as Ready.
+    - `NodeRegistrationHealthy` — No misconfiguration is preventing successful node launch/registration.
+  - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
   - `group` — The API group of the object the metric describes, e.g. `karpenter.sh`.
   - `kind` — The Kind of the object the metric describes, e.g. `NodeClaim`.
+    - `EC2NodeClass`
+    - `NodeClaim`
+    - `NodePool`
 
 ### `operator_status_condition_transition_seconds`
 The amount of time a condition was in a given state before transitioning. e.g. Alarm := P99(Updated=False) > 5 minutes
 - Stability Level: DEPRECATED
 - Dimensions:
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
-  - `to_status` — The status the condition transitioned to, for transition metrics.
+    - `SubnetsReady` — The selected subnets were resolved.
+    - `SecurityGroupsReady` — The selected security groups were resolved.
+    - `AMIsReady` — The selected AMIs were resolved.
+    - `InstanceProfileReady` — The instance profile was resolved or created.
+    - `CapacityReservationsReady` — The selected capacity reservations were resolved.
+    - `ValidationSucceeded` — The EC2NodeClass configuration passed validation.
+    - `PlacementGroupReady` — The selected placement group was resolved.
+    - `Launched` — The instance backing the NodeClaim has been launched with the cloud provider.
+    - `Registered` — The launched node has registered with the cluster.
+    - `Initialized` — The registered node has finished initializing and is ready for workloads.
+    - `Consolidatable` — The NodeClaim is currently eligible for consolidation.
+    - `Drifted` — The NodeClaim has drifted from its desired specification.
+    - `Drained` — The node has been drained of pods during termination.
+    - `VolumesDetached` — The node's volumes have been detached during termination.
+    - `InstanceTerminating` — The backing instance is terminating.
+    - `ConsistentStateFound` — A consistent instance state was observed before disruption.
+    - `DisruptionReason` — Set while the NodeClaim is being disrupted; records the disruption reason.
+    - `NodeClassReady` — The underlying NodeClass was resolved and is reporting as Ready.
+    - `NodeRegistrationHealthy` — No misconfiguration is preventing successful node launch/registration.
+  - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+  - `to_status` — The status a condition transitioned to, for transition metrics.
   - `group` — The API group of the object the metric describes, e.g. `karpenter.sh`.
   - `kind` — The Kind of the object the metric describes, e.g. `NodeClaim`.
+    - `EC2NodeClass`
+    - `NodeClaim`
+    - `NodePool`
 
 ### `operator_status_condition_current_status_seconds`
 The current amount of time in seconds that a status condition has been in a specific state. Alarm := P99(Updated=Unknown) > 5 minutes
@@ -847,10 +1003,32 @@ The current amount of time in seconds that a status condition has been in a spec
   - `namespace` — The namespace of the object the metric describes.
   - `name` — The name of the object the metric describes.
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
+    - `SubnetsReady` — The selected subnets were resolved.
+    - `SecurityGroupsReady` — The selected security groups were resolved.
+    - `AMIsReady` — The selected AMIs were resolved.
+    - `InstanceProfileReady` — The instance profile was resolved or created.
+    - `CapacityReservationsReady` — The selected capacity reservations were resolved.
+    - `ValidationSucceeded` — The EC2NodeClass configuration passed validation.
+    - `PlacementGroupReady` — The selected placement group was resolved.
+    - `Launched` — The instance backing the NodeClaim has been launched with the cloud provider.
+    - `Registered` — The launched node has registered with the cluster.
+    - `Initialized` — The registered node has finished initializing and is ready for workloads.
+    - `Consolidatable` — The NodeClaim is currently eligible for consolidation.
+    - `Drifted` — The NodeClaim has drifted from its desired specification.
+    - `Drained` — The node has been drained of pods during termination.
+    - `VolumesDetached` — The node's volumes have been detached during termination.
+    - `InstanceTerminating` — The backing instance is terminating.
+    - `ConsistentStateFound` — A consistent instance state was observed before disruption.
+    - `DisruptionReason` — Set while the NodeClaim is being disrupted; records the disruption reason.
+    - `NodeClassReady` — The underlying NodeClass was resolved and is reporting as Ready.
+    - `NodeRegistrationHealthy` — No misconfiguration is preventing successful node launch/registration.
+  - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
   - `group` — The API group of the object the metric describes, e.g. `karpenter.sh`.
   - `kind` — The Kind of the object the metric describes, e.g. `NodeClaim`.
+    - `EC2NodeClass`
+    - `NodeClaim`
+    - `NodePool`
 
 ### `operator_status_condition_count`
 The number of a condition for a given object, type and status. e.g. Alarm := Available=False > 0
@@ -859,10 +1037,32 @@ The number of a condition for a given object, type and status. e.g. Alarm := Ava
   - `namespace` — The namespace of the object the metric describes.
   - `name` — The name of the object the metric describes.
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
-  - `status` — The status of the condition (the state being left, for transition metrics).
+    - `SubnetsReady` — The selected subnets were resolved.
+    - `SecurityGroupsReady` — The selected security groups were resolved.
+    - `AMIsReady` — The selected AMIs were resolved.
+    - `InstanceProfileReady` — The instance profile was resolved or created.
+    - `CapacityReservationsReady` — The selected capacity reservations were resolved.
+    - `ValidationSucceeded` — The EC2NodeClass configuration passed validation.
+    - `PlacementGroupReady` — The selected placement group was resolved.
+    - `Launched` — The instance backing the NodeClaim has been launched with the cloud provider.
+    - `Registered` — The launched node has registered with the cluster.
+    - `Initialized` — The registered node has finished initializing and is ready for workloads.
+    - `Consolidatable` — The NodeClaim is currently eligible for consolidation.
+    - `Drifted` — The NodeClaim has drifted from its desired specification.
+    - `Drained` — The node has been drained of pods during termination.
+    - `VolumesDetached` — The node's volumes have been detached during termination.
+    - `InstanceTerminating` — The backing instance is terminating.
+    - `ConsistentStateFound` — A consistent instance state was observed before disruption.
+    - `DisruptionReason` — Set while the NodeClaim is being disrupted; records the disruption reason.
+    - `NodeClassReady` — The underlying NodeClass was resolved and is reporting as Ready.
+    - `NodeRegistrationHealthy` — No misconfiguration is preventing successful node launch/registration.
+  - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
   - `group` — The API group of the object the metric describes, e.g. `karpenter.sh`.
   - `kind` — The Kind of the object the metric describes, e.g. `NodeClaim`.
+    - `EC2NodeClass`
+    - `NodeClaim`
+    - `NodePool`
 
 ## Client Go Metrics
 
