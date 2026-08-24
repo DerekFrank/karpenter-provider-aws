@@ -580,12 +580,32 @@ The number of unschedulable Pods.
 - Stability Level: ALPHA
 - Dimensions:
   - `controller` — The name of the controller that emitted the metric.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
 
 ### `karpenter_scheduler_unfinished_work_seconds`
 How many seconds of work has been done that is in progress and hasn't been observed by scheduling_duration_seconds.
 - Stability Level: ALPHA
 - Dimensions:
   - `controller` — The name of the controller that emitted the metric.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
   - `scheduling_id` — A unique identifier for a scheduling simulation run.
 
 ### `karpenter_scheduler_scheduling_duration_seconds`
@@ -593,12 +613,32 @@ Duration of scheduling simulations used for deprovisioning and provisioning in s
 - Stability Level: STABLE
 - Dimensions:
   - `controller` — The name of the controller that emitted the metric.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
 
 ### `karpenter_scheduler_queue_depth`
 The number of pods currently waiting to be scheduled.
 - Stability Level: BETA
 - Dimensions:
   - `controller` — The name of the controller that emitted the metric.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
   - `scheduling_id` — A unique identifier for a scheduling simulation run.
 
 ### `karpenter_scheduler_pending_pods_by_effective_zone_count`
@@ -606,6 +646,16 @@ Pending pods dimensioned by effective zone constraint, or the intersection of po
 - Stability Level: ALPHA
 - Dimensions:
   - `controller` — The name of the controller that emitted the metric.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
   - `zone` — The availability zone of the instance.
 
 ### `karpenter_scheduler_ignored_pods_count`
@@ -766,6 +816,16 @@ Total number of errors returned from CloudProvider calls.
 - Stability Level: BETA
 - Dimensions:
   - `controller` — The name of the controller that emitted the metric.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
   - `method` — The CloudProvider interface method that was called, e.g. `Create`, `Delete`, `Get`, `List`, `GetInstanceTypes`, `IsDrifted`.
   - `provider` — The name of the cloud provider implementation.
   - `error` — The category of error returned by the CloudProvider call.
@@ -778,6 +838,16 @@ Duration of cloud provider method calls. Labeled by the controller, method name 
 - Stability Level: BETA
 - Dimensions:
   - `controller` — The name of the controller that emitted the metric.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
   - `method` — The CloudProvider interface method that was called, e.g. `Create`, `Delete`, `Get`, `List`, `GetInstanceTypes`, `IsDrifted`.
   - `provider` — The name of the cloud provider implementation.
 
@@ -802,12 +872,32 @@ Total number of terminal reconciliation errors per controller
 - Stability Level: STABLE
 - Dimensions:
   - `controller` — The name of the controller that owns the reconcile loop.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
 
 ### `controller_runtime_reconcile_total`
 Total number of reconciliations per controller
 - Stability Level: STABLE
 - Dimensions:
   - `controller` — The name of the controller that owns the reconcile loop.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
   - `result` — The outcome of the reconcile call.
     - `success`
     - `error`
@@ -819,30 +909,80 @@ Total number of reconciliation timeouts per controller
 - Stability Level: STABLE
 - Dimensions:
   - `controller` — The name of the controller that owns the reconcile loop.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
 
 ### `controller_runtime_reconcile_time_seconds`
 Length of time per reconciliation per controller
 - Stability Level: STABLE
 - Dimensions:
   - `controller` — The name of the controller that owns the reconcile loop.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
 
 ### `controller_runtime_reconcile_panics_total`
 Total number of reconciliation panics per controller
 - Stability Level: STABLE
 - Dimensions:
   - `controller` — The name of the controller that owns the reconcile loop.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
 
 ### `controller_runtime_reconcile_errors_total`
 Total number of reconciliation errors per controller
 - Stability Level: STABLE
 - Dimensions:
   - `controller` — The name of the controller that owns the reconcile loop.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
 
 ### `controller_runtime_max_concurrent_reconciles`
 Maximum number of concurrent reconciles per controller
 - Stability Level: STABLE
 - Dimensions:
   - `controller` — The name of the controller that owns the reconcile loop.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
 
 ### `controller_runtime_conversion_webhook_panics_total`
 Total number of conversion webhook panics
@@ -853,6 +993,16 @@ Number of currently used workers per controller
 - Stability Level: STABLE
 - Dimensions:
   - `controller` — The name of the controller that owns the reconcile loop.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
 
 ## Workqueue Metrics
 
@@ -862,6 +1012,16 @@ How long in seconds processing an item from workqueue takes.
 - Dimensions:
   - `name`
   - `controller` — The name of the controller that emitted the metric.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
 
 ### `workqueue_unfinished_work_seconds`
 How many seconds of work has been done that is in progress and hasn't been observed by work_duration. Large values indicate stuck threads. One can deduce the number of stuck threads by observing the rate at which this increases.
@@ -869,6 +1029,16 @@ How many seconds of work has been done that is in progress and hasn't been obser
 - Dimensions:
   - `name`
   - `controller` — The name of the controller that emitted the metric.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
 
 ### `workqueue_retries_total`
 Total number of retries handled by workqueue
@@ -876,6 +1046,16 @@ Total number of retries handled by workqueue
 - Dimensions:
   - `name`
   - `controller` — The name of the controller that emitted the metric.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
 
 ### `workqueue_queue_duration_seconds`
 How long in seconds an item stays in workqueue before being requested
@@ -883,6 +1063,16 @@ How long in seconds an item stays in workqueue before being requested
 - Dimensions:
   - `name`
   - `controller` — The name of the controller that emitted the metric.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
 
 ### `workqueue_longest_running_processor_seconds`
 How many seconds has the longest running processor for workqueue been running.
@@ -890,6 +1080,16 @@ How many seconds has the longest running processor for workqueue been running.
 - Dimensions:
   - `name`
   - `controller` — The name of the controller that emitted the metric.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
 
 ### `workqueue_depth`
 Current depth of workqueue by workqueue and priority
@@ -897,6 +1097,16 @@ Current depth of workqueue by workqueue and priority
 - Dimensions:
   - `name`
   - `controller` — The name of the controller that emitted the metric.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
   - `priority`
 
 ### `workqueue_adds_total`
@@ -905,6 +1115,16 @@ Total number of adds handled by workqueue
 - Dimensions:
   - `name`
   - `controller` — The name of the controller that emitted the metric.
+    - `nodeclass` — Resolves the subnets, security groups, AMIs, and instance profile an EC2NodeClass selects.
+    - `disruption` — Disrupts nodes via consolidation, drift, and expiration.
+    - `provisioner` — Provisions nodes for unschedulable pods.
+    - `nodeclaim.lifecycle` — Launches, registers, and initializes the instance backing a NodeClaim.
+    - `operatorpkg.ec2nodeclass.status` — operatorpkg status-condition controller for EC2NodeClass.
+    - `operatorpkg.ec2nodeclass.events` — operatorpkg events controller for EC2NodeClass.
+    - `operatorpkg.nodeclaim.status` — operatorpkg status-condition controller for NodeClaim.
+    - `operatorpkg.nodeclaim.events` — operatorpkg events controller for NodeClaim.
+    - `operatorpkg.nodepool.status` — operatorpkg status-condition controller for NodePool.
+    - `operatorpkg.nodepool.events` — operatorpkg events controller for NodePool.
 
 ## Termination Metrics
 

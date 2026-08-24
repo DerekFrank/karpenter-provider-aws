@@ -53,6 +53,7 @@ import (
 
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
 	sdk "github.com/aws/karpenter-provider-aws/pkg/aws"
+	providermetrics "github.com/aws/karpenter-provider-aws/pkg/controllers/metrics"
 	kubeletcel "github.com/aws/karpenter-provider-aws/pkg/cel"
 	"github.com/aws/karpenter-provider-aws/pkg/operator/options"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/amifamily"
@@ -119,7 +120,7 @@ func NewController(
 }
 
 func (c *Controller) Name() string {
-	return "nodeclass"
+	return providermetrics.NodeClassController.Name
 }
 
 //nolint:gocyclo

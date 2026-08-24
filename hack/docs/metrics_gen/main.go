@@ -76,6 +76,10 @@ var (
 	// map. It is the per-object value set of the `type` dimension on that object's
 	// status-condition metrics.
 	conditionTypesByKind = map[string][]valueInfo{}
+	// controllerValues is the union of the ControllerValues registries (core +
+	// provider) — the documented values of the `controller` dimension. The
+	// operatorpkg status/events controllers are added from their registration sites.
+	controllerValues []valueInfo
 	// ambiguous names resolved to conflicting values across packages; treated as unresolvable.
 	ambiguousStrings = map[string]bool{}
 	ambiguousSlices  = map[string]bool{}
@@ -212,6 +216,8 @@ func main() {
 	// declaration, so synthesize them from the parsed registration sites (plus the
 	// deprecated generic variants and the unparseable client_go metrics).
 	statusObjects := parseStatusControllerObjects(allPackages)
+	// Finalize the `controller` dimension values (registries + operatorpkg controllers).
+	attachControllerValues(statusObjects)
 	allMetrics = append(allMetrics, perObjectStatusMetrics(statusObjects)...)
 	allMetrics = append(allMetrics, deprecatedStatusMetrics(statusObjects)...)
 	allMetrics = append(allMetrics, hardcodedMetrics()...)
@@ -752,6 +758,53 @@ func collectSymbols(packages []*ast.Package) {
 	// metrics.ConditionTypeValues map), used to document the `type` dimension of
 	// each object's status-condition metrics.
 	collectConditionTypes(packages)
+	// Pass 6: the controller-name registries (metrics.ControllerValues in core and
+	// the provider), used to document the `controller` dimension.
+	collectControllerValues(packages)
+}
+
+// collectControllerValues unions every metrics.ControllerValues ([]Value) registry
+// across the scanned packages into the controller-name value set.
+func collectControllerValues(packages []*ast.Package) {
+	forEachValueSpec(packages, func(_, name string, value ast.Expr) {
+		if name != "ControllerValues" {
+			return
+		}
+		cl, ok := value.(*ast.CompositeLit)
+		if !ok || !isValueSliceType(cl.Type) {
+			return
+		}
+		if vals, ok := valueSliceFromCompositeLit(cl); ok {
+			controllerValues = append(controllerValues, vals...)
+		}
+	})
+}
+
+// attachControllerValues finalizes the `controller` dimension's value set — the
+// ControllerValues registries plus the operatorpkg status/events controllers, which
+// name themselves operatorpkg.<kind>.status / .events at runtime — and attaches it
+// wherever `controller` is documented (the code Label for karpenter metrics and the
+// controller_runtime third-party injection).
+func attachControllerValues(objects []statusObject) {
+	vals := slices.Clone(controllerValues)
+	for _, o := range objects {
+		vals = append(vals,
+			valueInfo{name: "operatorpkg." + o.subsystem + ".status", help: fmt.Sprintf("operatorpkg status-condition controller for %s.", o.kind)},
+			valueInfo{name: "operatorpkg." + o.subsystem + ".events", help: fmt.Sprintf("operatorpkg events controller for %s.", o.kind)},
+		)
+	}
+	if len(vals) == 0 {
+		return
+	}
+	if li, ok := labelRegistry["controller"]; ok {
+		li.values = vals
+		labelRegistry["controller"] = li
+	}
+	if inj, ok := labelInjections["controller_runtime"]; ok {
+		e := inj["controller"]
+		e.values = vals
+		inj["controller"] = e
+	}
 }
 
 // collectConditionTypes scans for a map[string][]Value composite literal (karpenter's
