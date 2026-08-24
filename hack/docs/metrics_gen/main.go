@@ -47,6 +47,11 @@ type metricInfo struct {
 	// bases (e.g. `reason` means a karpenter action reason in karpenter metrics
 	// but a status-condition reason in operatorpkg metrics).
 	labelScope string
+	// labelValues overrides, per dimension name, the set of documented values for
+	// THIS metric — used when a dimension's value set is metric-specific rather than
+	// global (e.g. the `type` dimension of operator_<kind>_status_condition_* metrics,
+	// whose values are that object's status condition types).
+	labelValues map[string][]valueInfo
 }
 
 var (
@@ -57,6 +62,15 @@ var (
 	// sliceSymbols maps a package-level []string constant/variable name to its resolved
 	// values (e.g. the aws-sdk-go-prometheus `labels` var -> {"service","action","code"}).
 	sliceSymbols = map[string][]string{}
+	// valueSliceSymbols maps a package-level []Value constant/variable name to its
+	// resolved values (e.g. operatorpkg's conditionStatusValues), so a Label whose
+	// Values field references a shared var resolves like an inline literal.
+	valueSliceSymbols = map[string][]valueInfo{}
+	// conditionTypesByKind maps an object Kind (e.g. "NodeClaim") to the status
+	// condition types it sets, sourced from karpenter's metrics.ConditionTypeValues
+	// map. It is the per-object value set of the `type` dimension on that object's
+	// status-condition metrics.
+	conditionTypesByKind = map[string][]valueInfo{}
 	// ambiguous names resolved to conflicting values across packages; treated as unresolvable.
 	ambiguousStrings = map[string]bool{}
 	ambiguousSlices  = map[string]bool{}
@@ -88,7 +102,13 @@ func labelScopeForFile(file string) string {
 // labelInfo is the resolved documentation for a metric dimension.
 type labelInfo struct {
 	help   string
-	values []string
+	values []valueInfo
+}
+
+// valueInfo is the resolved documentation for a single dimension value.
+type valueInfo struct {
+	name string
+	help string
 }
 
 // labelInjections supplies documentation for dimensions of THIRD-PARTY metrics
@@ -107,7 +127,7 @@ var labelInjections = map[string]map[string]labelInfo{
 	"controller_runtime": {
 		"controller": {help: "The name of the controller that owns the reconcile loop."},
 		"name":       {help: "The name of the controller instance."},
-		"result":     {help: "The outcome of the reconcile call.", values: []string{"success", "error", "requeue", "requeue_after"}},
+		"result":     {help: "The outcome of the reconcile call.", values: []valueInfo{{name: "success"}, {name: "error"}, {name: "requeue"}, {name: "requeue_after"}}},
 	},
 	"client_go": {
 		"verb":   {help: "The HTTP verb of the Kubernetes API request, e.g. `GET`, `POST`."},
@@ -149,7 +169,6 @@ var (
 		"karpenter_voluntary_disruption_decision_evaluation_duration_seconds", "karpenter_voluntary_disruption_eligible_nodes", "karpenter_voluntary_disruption_consolidation_timeouts_total",
 		// Per-object status condition and termination metrics from operatorpkg
 		"nodeclaim_status_condition", "nodeclaim_termination",
-		"node_status_condition", "node_termination",
 		"nodepool_status_condition", "nodepool_termination",
 		"ec2nodeclass_status_condition", "ec2nodeclass_termination"}
 	// Deprecated generic status condition and termination metrics (without object name prefix).
@@ -183,9 +202,9 @@ func main() {
 
 	// The operatorpkg status and events controllers dynamically create per-object metrics
 	// at runtime based on the Go type parameter passed to status.NewController[T]().
-	// These cannot be extracted via AST parsing, so we generate them from a known list of
-	// object types that have status controllers registered.
-	allMetrics = append(allMetrics, perObjectStatusMetrics()...)
+	// These cannot be extracted from the metric declarations, so we synthesize them from
+	// the status controller registration sites parsed out of the scanned packages.
+	allMetrics = append(allMetrics, perObjectStatusMetrics(parseStatusControllerObjects(allPackages))...)
 
 	// Dedupe metrics
 	allMetrics = lo.UniqBy(allMetrics, func(m metricInfo) string {
@@ -289,17 +308,22 @@ func formatDimensions(m metricInfo) string {
 	for _, l := range m.labels {
 		b.WriteString(fmt.Sprintf("\n  - `%s`", l))
 		info, ok := describeLabel(m.subsystem, l, m.labelScope)
-		if !ok {
-			continue
-		}
-		if info.help != "" {
+		if ok && info.help != "" {
 			b.WriteString(fmt.Sprintf(" — %s", info.help))
 		}
-		if len(info.values) > 0 {
-			quoted := lo.Map(info.values, func(v string, _ int) string {
-				return fmt.Sprintf("`%s`", v)
-			})
-			b.WriteString(fmt.Sprintf(" (values: %s)", strings.Join(quoted, ", ")))
+		// A metric-specific value set (e.g. per-object condition types) overrides the
+		// dimension's global values.
+		values := info.values
+		if override, ok := m.labelValues[l]; ok {
+			values = override
+		}
+		// Render each documented value as a nested sub-list item, with its own help
+		// where available.
+		for _, v := range values {
+			b.WriteString(fmt.Sprintf("\n    - `%s`", v.name))
+			if v.help != "" {
+				b.WriteString(fmt.Sprintf(" — %s", v.help))
+			}
 		}
 	}
 	return b.String()
@@ -390,15 +414,76 @@ func bySubsystem(metrics []metricInfo) func(i int, j int) bool {
 	}
 }
 
-// perObjectStatusMetrics generates metrics for the operatorpkg status and events controllers.
-// These metrics are dynamically created at runtime based on the Go type parameter passed to
-// status.NewController[T]() and cannot be extracted via AST parsing. The object types are
-// determined by the status controller registrations in karpenter and karpenter-provider-aws.
-func perObjectStatusMetrics() []metricInfo {
-	// Object types that have status controllers registered via status.NewController[T]()
-	// in karpenter (nodeclaim, nodepool, node) and karpenter-provider-aws (ec2nodeclass).
-	objectNames := []string{"nodeclaim", "nodepool", "node", "ec2nodeclass"}
+// statusObject is a type that has a status controller registered via
+// status.NewController[T](), parsed from the registration sites.
+type statusObject struct {
+	kind      string // the object Kind, e.g. "NodeClaim"
+	subsystem string // the metric subsystem prefix, e.g. "nodeclaim"
+}
 
+// parseStatusControllerObjects finds status.NewController[T]() registrations across
+// the scanned packages and returns the object types they register. This is the
+// authoritative, self-maintaining source for which per-object status/termination
+// metrics exist (replacing a hardcoded list).
+func parseStatusControllerObjects(packages []*ast.Package) []statusObject {
+	seen := map[string]statusObject{}
+	for _, pkg := range packages {
+		for _, file := range pkg.Files {
+			ast.Inspect(file, func(n ast.Node) bool {
+				ce, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				// A generic call fn[T](...) parses as a call whose Fun is an IndexExpr
+				// (one type arg) or IndexListExpr (several). status.NewController[T]().
+				var fun ast.Expr
+				var typeArg ast.Expr
+				switch idx := ce.Fun.(type) {
+				case *ast.IndexExpr:
+					fun, typeArg = idx.X, idx.Index
+				case *ast.IndexListExpr:
+					if len(idx.Indices) == 0 {
+						return true
+					}
+					fun, typeArg = idx.X, idx.Indices[0]
+				default:
+					return true
+				}
+				sel, ok := fun.(*ast.SelectorExpr)
+				if !ok || sel.Sel.Name != "NewController" {
+					return true
+				}
+				if kind := typeName(typeArg); kind != "" {
+					seen[kind] = statusObject{kind: kind, subsystem: strings.ToLower(kind)}
+				}
+				return true
+			})
+		}
+	}
+	objs := lo.Values(seen)
+	sort.Slice(objs, func(i, j int) bool { return objs[i].subsystem < objs[j].subsystem })
+	return objs
+}
+
+// typeName returns the type name of a (possibly pointer, possibly package-qualified)
+// type expression, e.g. *v1.NodeClaim -> "NodeClaim".
+func typeName(e ast.Expr) string {
+	switch t := e.(type) {
+	case *ast.StarExpr:
+		return typeName(t.X)
+	case *ast.SelectorExpr:
+		return t.Sel.Name
+	case *ast.Ident:
+		return t.Name
+	}
+	return ""
+}
+
+// perObjectStatusMetrics synthesizes the metrics that operatorpkg's status and events
+// controllers create per registered object type. operatorpkg creates them at runtime
+// from the type parameter of status.NewController[T](), so they can't be read from a
+// metric declaration; objects is the set parsed from those registration sites.
+func perObjectStatusMetrics(objects []statusObject) []metricInfo {
 	type metricTemplate struct {
 		subsystemSuffix string
 		name            string
@@ -420,30 +505,51 @@ func perObjectStatusMetrics() []metricInfo {
 	}
 
 	var metricsOut []metricInfo
-	for _, obj := range objectNames {
+	for _, obj := range objects {
 		for _, t := range templates {
+			// The `type` dimension of an object's status-condition metrics enumerates
+			// that object's condition types.
+			var labelValues map[string][]valueInfo
+			if types, ok := conditionTypesByKind[obj.kind]; ok && slices.Contains(t.labels, "type") {
+				labelValues = map[string][]valueInfo{"type": types}
+			}
 			metricsOut = append(metricsOut, metricInfo{
-				namespace:  "operator",
-				subsystem:  fmt.Sprintf("%s_%s", obj, t.subsystemSuffix),
-				name:       t.name,
-				help:       t.help,
-				labels:     t.labels,
-				labelScope: "operatorpkg",
+				namespace:   "operator",
+				subsystem:   fmt.Sprintf("%s_%s", obj.subsystem, t.subsystemSuffix),
+				name:        t.name,
+				help:        t.help,
+				labels:      t.labels,
+				labelScope:  "operatorpkg",
+				labelValues: labelValues,
 			})
 		}
 	}
 
 	// Deprecated generic metrics (without object name prefix) are still emitted at runtime
 	// when emitDeprecatedMetrics is enabled on the status controller. These additionally
-	// carry group/kind labels instead of baking the object name into the subsystem.
+	// carry group/kind labels instead of baking the object name into the subsystem, so
+	// their kind/type dimensions span every registered object.
+	allKinds := lo.Map(objects, func(o statusObject, _ int) valueInfo { return valueInfo{name: o.kind} })
+	var allTypes []valueInfo
+	for _, o := range objects {
+		allTypes = append(allTypes, conditionTypesByKind[o.kind]...)
+	}
+	// A condition type (e.g. ValidationSucceeded) can be set by more than one object;
+	// dedupe by name so the union lists each once.
+	allTypes = lo.UniqBy(allTypes, func(v valueInfo) string { return v.name })
 	for _, t := range templates {
+		labelValues := map[string][]valueInfo{"kind": allKinds}
+		if slices.Contains(t.labels, "type") && len(allTypes) > 0 {
+			labelValues["type"] = allTypes
+		}
 		metricsOut = append(metricsOut, metricInfo{
-			namespace:  "operator",
-			subsystem:  t.subsystemSuffix,
-			name:       t.name,
-			help:       t.help,
-			labels:     append(append([]string{}, t.labels...), "group", "kind"),
-			labelScope: "operatorpkg",
+			namespace:   "operator",
+			subsystem:   t.subsystemSuffix,
+			name:        t.name,
+			help:        t.help,
+			labels:      append(append([]string{}, t.labels...), "group", "kind"),
+			labelScope:  "operatorpkg",
+			labelValues: labelValues,
 		})
 	}
 
@@ -604,6 +710,59 @@ func collectSymbols(packages []*ast.Package) {
 		}
 		sliceSymbols[name] = vals
 	})
+	// Pass 3: []Value composite literals (shared value sets referenced by a Label's
+	// Values field, e.g. operatorpkg's conditionStatusValues).
+	forEachValueSpec(packages, func(_, name string, value ast.Expr) {
+		cl, ok := value.(*ast.CompositeLit)
+		if !ok || !isValueSliceType(cl.Type) {
+			return
+		}
+		if vals, ok := valueSliceFromCompositeLit(cl); ok {
+			valueSliceSymbols[name] = vals
+		}
+	})
+	// Pass 4: the per-Kind condition-type registry (karpenter's
+	// metrics.ConditionTypeValues map), used to document the `type` dimension of
+	// each object's status-condition metrics.
+	collectConditionTypes(packages)
+}
+
+// collectConditionTypes scans for a map[string][]Value composite literal (karpenter's
+// metrics.ConditionTypeValues) and records each Kind's status condition types.
+func collectConditionTypes(packages []*ast.Package) {
+	forEachValueSpec(packages, func(_, _ string, value ast.Expr) {
+		cl, ok := value.(*ast.CompositeLit)
+		if !ok {
+			return
+		}
+		mt, ok := cl.Type.(*ast.MapType)
+		if !ok {
+			return
+		}
+		if key, ok := mt.Key.(*ast.Ident); !ok || key.Name != "string" {
+			return
+		}
+		if !isValueSliceType(mt.Value) {
+			return
+		}
+		for _, el := range cl.Elts {
+			kv, ok := el.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			kind, ok := stringLiteralValue(kv.Key)
+			if !ok {
+				continue
+			}
+			vcl, ok := kv.Value.(*ast.CompositeLit)
+			if !ok {
+				continue
+			}
+			if vals, ok := valueSliceFromCompositeLit(vcl); ok {
+				conditionTypesByKind[kind] = vals
+			}
+		}
+	})
 }
 
 // collectLabels scans package-level var declarations for metrics.Label{...}
@@ -619,7 +778,7 @@ func collectLabels(packages []*ast.Package) {
 			return
 		}
 		var name, help string
-		var values []string
+		var values []valueInfo
 		haveName := false
 		for _, el := range cl.Elts {
 			kv, ok := el.(*ast.KeyValueExpr)
@@ -636,11 +795,7 @@ func collectLabels(packages []*ast.Package) {
 					help = s
 				}
 			case "Values":
-				if cl2, ok := kv.Value.(*ast.CompositeLit); ok {
-					if vals, ok := stringSliceFromCompositeLit(cl2); ok {
-						values = vals
-					}
-				} else if vals, ok := resolveLabels(kv.Value); ok {
+				if vals, ok := resolveValues(kv.Value); ok {
 					values = vals
 				}
 			}
@@ -684,6 +839,80 @@ func isLabelType(t ast.Expr) bool {
 		return v.Sel.Name == "Label"
 	}
 	return false
+}
+
+// isValueSliceType reports whether an expression's type is []Value (either the
+// bare Value identifier, when declared in package metrics, or a metrics.Value /
+// pmetrics.Value selector used elsewhere).
+func isValueSliceType(t ast.Expr) bool {
+	at, ok := t.(*ast.ArrayType)
+	if !ok {
+		return false
+	}
+	switch v := at.Elt.(type) {
+	case *ast.Ident:
+		return v.Name == "Value"
+	case *ast.SelectorExpr:
+		return v.Sel.Name == "Value"
+	}
+	return false
+}
+
+// valueSliceFromCompositeLit resolves a []Value composite literal to its documented
+// values. Each element is a Value{Name: ..., Help: ...} composite literal; Name is
+// resolved through the string symbol table so it may reference a const.
+func valueSliceFromCompositeLit(cl *ast.CompositeLit) ([]valueInfo, bool) {
+	if cl.Type != nil && !isValueSliceType(cl.Type) {
+		return nil, false
+	}
+	out := make([]valueInfo, 0, len(cl.Elts))
+	for _, el := range cl.Elts {
+		ecl, ok := el.(*ast.CompositeLit)
+		if !ok {
+			return nil, false
+		}
+		var vi valueInfo
+		for _, e := range ecl.Elts {
+			kv, ok := e.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			switch fmt.Sprintf("%s", kv.Key) {
+			case "Name":
+				if s, ok := resolveStringExpr(kv.Value); ok {
+					vi.name = s
+				}
+			case "Help":
+				if s, ok := resolveStringExpr(kv.Value); ok {
+					vi.help = s
+				}
+			}
+		}
+		if vi.name == "" {
+			return nil, false
+		}
+		out = append(out, vi)
+	}
+	return out, true
+}
+
+// resolveValues resolves a Label's Values field, handling both an inline []Value
+// composite literal and a reference to a named []Value variable (e.g. a shared
+// conditionStatusValues var).
+func resolveValues(expr ast.Expr) ([]valueInfo, bool) {
+	switch v := expr.(type) {
+	case *ast.CompositeLit:
+		return valueSliceFromCompositeLit(v)
+	case *ast.Ident:
+		if vals, ok := valueSliceSymbols[v.Name]; ok {
+			return vals, true
+		}
+	case *ast.SelectorExpr:
+		if vals, ok := valueSliceSymbols[v.Sel.Name]; ok {
+			return vals, true
+		}
+	}
+	return nil, false
 }
 
 // forEachValueSpec invokes fn for every (file, name, value) tuple in package-level
