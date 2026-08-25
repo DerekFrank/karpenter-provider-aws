@@ -215,7 +215,9 @@ issues: ## Run GitHub issue analysis scripts
 	./hack/github/label_issue_count.py > "karpenter-labels-$(shell date +"%Y-%m-%d").csv"
 
 website: ## Serve the docs website locally
-	cd website && npm install && hugo mod tidy && hugo server
+	# Use the theme-compatible hugo pinned in website/package.json (hugo-extended)
+	# rather than whatever `hugo` is on PATH, which is often the wrong version.
+	cd website && npm install && ./node_modules/.bin/hugo mod tidy && ./node_modules/.bin/hugo server
 
 tidy: ## Recursively "go mod tidy" on all directories where go.mod exists
 	$(foreach dir,$(MOD_DIRS),cd $(dir) && go mod tidy $(newline))
