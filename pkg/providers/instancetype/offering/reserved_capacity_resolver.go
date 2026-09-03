@@ -30,6 +30,7 @@ import (
 	arczonalshiftProvider "github.com/aws/karpenter-provider-aws/pkg/providers/arczonalshift"
 
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
+	awscache "github.com/aws/karpenter-provider-aws/pkg/cache"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/capacityreservation"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/instancetype/compatibility"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/placementgroup"
@@ -42,6 +43,7 @@ import (
 type ReservedCapacityResolver struct {
 	PricingProvider             pricing.Provider
 	CapacityReservationProvider capacityreservation.Provider
+	UnavailableOfferings        *awscache.UnavailableOfferings
 	ZonalshiftProvider          arczonalshiftProvider.Provider
 }
 
@@ -94,8 +96,15 @@ func (r *ReservedCapacityResolver) ResolveOfferings(
 				scheduling.NewRequirement(v1.LabelCapacityReservationType, corev1.NodeSelectorOpIn, string(reservation.ReservationType)),
 				scheduling.NewRequirement(v1.LabelCapacityReservationInterruptible, corev1.NodeSelectorOpIn, fmt.Sprintf("%t", reservation.Interruptible)),
 			),
-			Price:               price,
-			Available:           isCompatibleWithNodeClass && reservationCapacity != 0 && itZones.Has(reservation.AvailabilityZone) && reservation.State != v1.CapacityReservationStateExpiring && !isZonalShifted,
+			Price: price,
+			// Available reflects only non-capacity usability: compatibility, zone, expiry, zonal shift, and ICE
+			// (via the shared UnavailableOfferings cache — same channel spot/on-demand ICEs use). It is intentionally
+			// decoupled from ReservationCapacity: a full-but-otherwise-healthy reservation is Available=true with
+			// ReservationCapacity=0 ("out of capacity, nothing else wrong"), which lets terminate-first disruption
+			// (RFC kubernetes-sigs/karpenter#3203) recognize a no-headroom reservation instead of stalling. A reservation
+			// that is unavailable for another reason (ICE'd, expiring, incompatible) is Available=false and is respected.
+			Available: isCompatibleWithNodeClass && itZones.Has(reservation.AvailabilityZone) && reservation.State != v1.CapacityReservationStateExpiring && !isZonalShifted &&
+				!r.UnavailableOfferings.IsUnavailable(ec2types.InstanceType(it.Name), reservation.AvailabilityZone, nil, karpv1.CapacityTypeReserved),
 			ReservationCapacity: reservationCapacity,
 		}
 		if zoneFound {

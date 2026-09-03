@@ -33,11 +33,9 @@ import (
 	"sigs.k8s.io/karpenter/pkg/metrics"
 	nodeclaimutils "sigs.k8s.io/karpenter/pkg/utils/nodeclaim"
 
-	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
 	"github.com/aws/karpenter-provider-aws/pkg/cache"
 	interruptionevents "github.com/aws/karpenter-provider-aws/pkg/controllers/interruption/events"
 	"github.com/aws/karpenter-provider-aws/pkg/controllers/interruption/messages"
-	"github.com/aws/karpenter-provider-aws/pkg/providers/capacityreservation"
 )
 
 type Action string
@@ -51,12 +49,11 @@ const (
 // InterruptionHandler contains shared logic for handling interruption messages
 // from both the SQS queue and the DescribeInstanceStatus API.
 type InterruptionHandler struct {
-	kubeClient                  client.Client
-	clk                         clock.Clock
-	cloudProvider               cloudprovider.CloudProvider
-	recorder                    events.Recorder
-	unavailableOfferingsCache   *cache.UnavailableOfferings
-	capacityReservationProvider capacityreservation.Provider
+	kubeClient                client.Client
+	clk                       clock.Clock
+	cloudProvider             cloudprovider.CloudProvider
+	recorder                  events.Recorder
+	unavailableOfferingsCache *cache.UnavailableOfferings
 }
 
 // handleMessage takes an action against every node involved in the message that is owned by a NodePool.
@@ -142,10 +139,16 @@ func (h *InterruptionHandler) markUnavailableOfferings(ctx context.Context, msg 
 			h.unavailableOfferingsCache.MarkUnavailable(ctx, ec2types.InstanceType(instanceType), zone, karpv1.CapacityTypeSpot, unavailableReason)
 		}
 	}
-	if msg.Kind() == messages.CapacityReservationInterruptionKind && h.capacityReservationProvider != nil {
-		reservationID := nodeClaim.Labels[v1.LabelCapacityReservationID]
-		if reservationID != "" {
-			h.capacityReservationProvider.MarkUnavailable(reservationID)
+	if msg.Kind() == messages.CapacityReservationInterruptionKind && h.unavailableOfferingsCache != nil {
+		zone := nodeClaim.Labels[corev1.LabelTopologyZone]
+		instanceType := nodeClaim.Labels[corev1.LabelInstanceTypeStable]
+		if zone != "" && instanceType != "" {
+			// A reservation interruption is a non-capacity unavailability, so record it in the shared
+			// UnavailableOfferings cache (which drives the reserved offering's Available flag) rather than the
+			// reservation manager, which tracks only capacity.
+			h.unavailableOfferingsCache.MarkUnavailable(ctx, ec2types.InstanceType(instanceType), zone, karpv1.CapacityTypeReserved, map[string]string{
+				"reason": string(msg.Kind()),
+			})
 		}
 	}
 }

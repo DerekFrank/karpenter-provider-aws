@@ -299,6 +299,13 @@ func (f reservedOfferingFilter) FilterReject(instanceTypes []*cloudprovider.Inst
 			if o.CapacityType() != karpv1.CapacityTypeReserved {
 				continue
 			}
+			// Available no longer implies free capacity: a full-but-healthy reservation is Available=true with
+			// ReservationCapacity=0. The launch path can only place into a reservation with free slots, so skip full
+			// ones here — otherwise we'd attempt to launch into a full reservation and ICE. (An instance type left with
+			// no capacity-bearing reserved offering is rejected below, yielding the pre-launch ICE as before.)
+			if o.ReservationCapacity == 0 {
+				continue
+			}
 			if current, ok := zonalOfferings[o.Zone()]; !ok || o.ReservationCapacity > current.ReservationCapacity {
 				zonalOfferings[o.Zone()] = o
 			}
