@@ -22,16 +22,19 @@ import (
 	"go/token"
 	"io/fs"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/awslabs/operatorpkg/serrors"
 	"github.com/samber/lo"
 
 	"sigs.k8s.io/karpenter/pkg/metrics"
+	"sigs.k8s.io/karpenter/pkg/utils/pretty"
 )
 
 type metricInfo struct {
@@ -39,6 +42,181 @@ type metricInfo struct {
 	subsystem string
 	name      string
 	help      string
+	labels    []string
+	// labelScope, when non-empty, selects a scoped label registry to resolve this
+	// metric's dimensions before falling back to the global registry. It
+	// disambiguates dimension names reused with different meanings across code
+	// bases (e.g. `reason` means a karpenter action reason in karpenter metrics
+	// but a status-condition reason in operatorpkg metrics).
+	labelScope string
+	// labelValues overrides, per dimension name, the set of documented values for
+	// THIS metric — used when a dimension's value set is metric-specific rather than
+	// global (e.g. the `type` dimension of operator_<kind>_status_condition_* metrics,
+	// whose values are that object's status condition types).
+	labelValues map[string][]valueInfo
+	// labelInfos holds the documentation resolved directly from THIS metric's
+	// []opmetrics.Label{...} constructor argument, keyed by dimension name. It is
+	// authoritative for the metric (a metric passes the specific Label vars it emits),
+	// so it disambiguates dimensions reused with different values/help across metrics
+	// (e.g. the three `reason` category Labels) that a by-name global lookup cannot.
+	labelInfos map[string]labelInfo
+}
+
+var (
+	// stringSymbols maps a package-level string constant/variable name to its value
+	// (e.g. ReasonLabel -> "reason"), used to resolve metric label names that are
+	// declared as named constants rather than string literals.
+	stringSymbols = map[string]string{}
+	// sliceSymbols maps a package-level []string constant/variable name to its resolved
+	// values (e.g. the aws-sdk-go-prometheus `labels` var -> {"service","action","code"}).
+	sliceSymbols = map[string][]string{}
+	// valueSliceSymbols maps a package-level []Value constant/variable name to its
+	// resolved values (e.g. operatorpkg's conditionStatusValues), so a Label whose
+	// Values field references a shared var resolves like an inline literal.
+	valueSliceSymbols = map[string][]valueInfo{}
+	// valueSymbols maps a package-level Value variable name to its resolved value, so
+	// a []Value literal may reference first-class Value vars by name instead of
+	// repeating an inline {Name, Help} literal.
+	valueSymbols = map[string]valueInfo{}
+	// conditionTypesByKind maps an object Kind (e.g. "NodeClaim") to the status
+	// condition types it sets, sourced from karpenter's metrics.ConditionTypeValues
+	// map. It is the per-object value set of the `type` dimension on that object's
+	// status-condition metrics.
+	conditionTypesByKind = map[string][]valueInfo{}
+	// ambiguous names resolved to conflicting values across packages; treated as unresolvable.
+	ambiguousStrings = map[string]bool{}
+	ambiguousSlices  = map[string]bool{}
+
+	// labelRegistry maps a resolved label name (dimension key) to its documentation,
+	// sourced from metrics.Label{...} var declarations across the scanned packages
+	// (both karpenter core and karpenter-provider-aws). It is the source of truth for
+	// per-dimension help text and stable values.
+	labelRegistry = map[string]labelInfo{}
+	// labelVarName / labelVarInfo map a Label VARIABLE name (e.g. "NodeClaimDisruptedReason")
+	// to its resolved dimension name and documentation. Unlike labelRegistry (keyed by
+	// dimension name, so same-named Labels collide), these are keyed by the Go var name,
+	// letting a metric resolve the SPECIFIC Label it references in its []Label argument.
+	labelVarName = map[string]string{}
+	labelVarInfo = map[string]labelInfo{}
+	// ambiguousLabelVars marks Label var names declared in more than one package with
+	// differing docs; resolving one from a bare identifier is unsafe, so it emits the
+	// dimension name without help/values.
+	ambiguousLabelVars = map[string]bool{}
+	// labelSliceSymbols maps a package-level []opmetrics.Label variable name to its
+	// resolved dimension names + per-dimension docs, so a metric whose label argument
+	// is a named []Label var (e.g. a controller that hoists its fixed dimensions into
+	// a shared var) documents like an inline []Label{...} literal.
+	labelSliceSymbols = map[string]labelSlice{}
+	// funcReturns maps a zero-result-guard helper function name to the single
+	// expression it returns, so a metric whose label argument is a call to a local
+	// helper (e.g. labelNames() / nodeLabelNames()) resolves by inlining that return.
+	// resolvingFuncs guards against recursion while doing so.
+	funcReturns    = map[string]ast.Expr{}
+	resolvingFuncs = map[string]bool{}
+	// unresolvedLabelMetrics collects the qualified names of metrics whose label
+	// argument could not be resolved to any dimension (e.g. built by an unparseable
+	// helper function). Reported to stderr at the end of a run so the silent gap is
+	// at least visible rather than producing a dimension-less doc entry unnoticed.
+	unresolvedLabelMetrics []string
+	// scopedLabelRegistry holds the same Label documentation keyed first by a scope
+	// (the code base a Label was declared in, e.g. "operatorpkg") and then by name.
+	// A metric with a matching labelScope resolves its dimensions here first, so a
+	// name reused with a different meaning across code bases (e.g. `reason`) gets
+	// the documentation from its own code base rather than whichever was scanned
+	// first into the global registry.
+	scopedLabelRegistry = map[string]map[string]labelInfo{}
+)
+
+// labelScopeForFile returns the scope a Label declaration belongs to, based on
+// the file it was declared in. operatorpkg-declared Labels document the
+// dimensions of operatorpkg's status/termination/event metrics. Matching an
+// "operatorpkg" path segment (rather than any substring) avoids misattributing
+// files that merely sit under a checkout/branch dir whose name contains it.
+func labelScopeForFile(file string) string {
+	if strings.Contains(file, "/operatorpkg/") || strings.Contains(file, "/operatorpkg@") {
+		return "operatorpkg"
+	}
+	return ""
+}
+
+// labelInfo is the resolved documentation for a metric dimension.
+type labelInfo struct {
+	help   string
+	values []valueInfo
+}
+
+// valueInfo is the resolved documentation for a single dimension value.
+type valueInfo struct {
+	name string
+	help string
+}
+
+// labelInjections supplies documentation for dimensions of THIRD-PARTY metrics
+// whose labels cannot be described with a metrics.Label in karpenter code
+// (aws-sdk-go-prometheus, controller-runtime, client-go). It is keyed by
+// subsystem first so that a name reused with different meanings across subsystems
+// (e.g. `code` is an HTTP status here but a Kubernetes eviction response elsewhere)
+// resolves correctly. All values are hardcoded, well-known constants for the
+// respective third-party library.
+// reasonValueContributions maps a fully-qualified metric name to the name of a
+// []opmetrics.Value variable whose values this provider contributes to that
+// metric's `reason` dimension. Used when the provider emits reason values into a
+// core-declared metric (e.g. the interruption handler emits EC2 event kinds into
+// karpenter_nodeclaims_disrupted_total), which the core Label can't enumerate.
+var reasonValueContributions = map[string]string{
+	"karpenter_nodeclaims_disrupted_total": "InterruptionReasonValues",
+}
+
+var labelInjections = map[string]map[string]labelInfo{
+	"aws_sdk_go": {
+		"service": {help: "The AWS service the request was made to, e.g. `EC2`."},
+		"action":  {help: "The AWS API operation invoked, e.g. `DescribeSubnets`."},
+		"code":    {help: "The HTTP status code of the response, e.g. `200`, `503`."},
+	},
+	"controller_runtime": {
+		"controller": {help: "The name of the controller that owns the reconcile loop."},
+		"name":       {help: "The name of the controller instance."},
+		"result":     {help: "The outcome of the reconcile call.", values: []valueInfo{{name: "success"}, {name: "error"}, {name: "requeue"}, {name: "requeue_after"}}},
+	},
+	"client_go": {
+		"verb":        {help: "The HTTP verb of the Kubernetes API request, e.g. `GET`, `POST`."},
+		"code":        {help: "The HTTP status code of the Kubernetes API response."},
+		"method":      {help: "The HTTP method of the Kubernetes API request."},
+		"host":        {help: "The Kubernetes API server host the request was made to."},
+		"group":       {help: "The API group of the request's target resource."},
+		"version":     {help: "The API version of the request's target resource."},
+		"kind":        {help: "The kind of the request's target resource."},
+		"subresource": {help: "The subresource of the request, if any."},
+	},
+	"workqueue": {
+		"name":     {help: "The name of the workqueue, typically the owning controller's name."},
+		"priority": {help: "The priority band of the enqueued item."},
+	},
+	"leader_election": {
+		"name": {help: "The name of the lease used for leader election."},
+	},
+}
+
+// describeLabel resolves documentation for a metric's dimension, preferring a
+// subsystem-scoped third-party injection, then a code-base-scoped label (when the
+// metric declares a labelScope), then the global code-sourced label registry.
+func describeLabel(subsystem, name, scope string) (labelInfo, bool) {
+	if inj, ok := labelInjections[subsystem]; ok {
+		if li, ok := inj[name]; ok {
+			return li, true
+		}
+	}
+	if scope != "" {
+		if scoped, ok := scopedLabelRegistry[scope]; ok {
+			if li, ok := scoped[name]; ok {
+				return li, true
+			}
+		}
+	}
+	if li, ok := labelRegistry[name]; ok {
+		return li, true
+	}
+	return labelInfo{}, false
 }
 
 var (
@@ -51,7 +229,6 @@ var (
 		"karpenter_voluntary_disruption_decision_evaluation_duration_seconds", "karpenter_voluntary_disruption_eligible_nodes", "karpenter_voluntary_disruption_consolidation_timeouts_total",
 		// Per-object status condition and termination metrics from operatorpkg
 		"nodeclaim_status_condition", "nodeclaim_termination",
-		"node_status_condition", "node_termination",
 		"nodepool_status_condition", "nodepool_termination",
 		"ec2nodeclass_status_condition", "ec2nodeclass_termination"}
 	// Deprecated generic status condition and termination metrics (without object name prefix).
@@ -71,17 +248,32 @@ func main() {
 	if flag.NArg() < 2 {
 		log.Fatalf("Usage: %s path/to/metrics/controller path/to/metrics/controller2 path/to/markdown.md", os.Args[0])
 	}
-	var allMetrics []metricInfo
+	var allPackages []*ast.Package
 	for i := 0; i < flag.NArg()-1; i++ {
-		packages := getPackages(flag.Arg(i))
-		allMetrics = append(allMetrics, getMetricsFromPackages(packages...)...)
+		allPackages = append(allPackages, getPackages(flag.Arg(i))...)
 	}
+	// Build symbol tables for string and []string constants/variables across all
+	// packages so we can resolve metric label names declared as named identifiers.
+	collectSymbols(allPackages)
+	// Record single-return helper functions so metric label arguments that are calls
+	// to them (labelNames(), nodeLabelNames(), ...) resolve.
+	collectFuncReturns(allPackages)
+	// Build the label documentation registry from metrics.Label{...} declarations
+	// (must run after collectSymbols so Name/Values identifiers resolve).
+	collectLabels(allPackages)
+	// Record []opmetrics.Label variables (must run after collectLabels so the element
+	// Label vars they reference are already resolved).
+	collectLabelSlices(allPackages)
+	allMetrics := getMetricsFromPackages(allPackages...)
 
-	// The operatorpkg status and events controllers dynamically create per-object metrics
-	// at runtime based on the Go type parameter passed to status.NewController[T]().
-	// These cannot be extracted via AST parsing, so we generate them from a known list of
-	// object types that have status controllers registered.
-	allMetrics = append(allMetrics, perObjectStatusMetrics()...)
+	// operatorpkg's status controller creates per-object metrics at runtime from the
+	// type parameter of status.NewController[T](); they can't be read from a metric
+	// declaration, so synthesize them from the parsed registration sites (plus the
+	// deprecated generic variants and the unparseable client_go metrics).
+	statusObjects := parseStatusControllerObjects(allPackages)
+	allMetrics = append(allMetrics, perObjectStatusMetrics(statusObjects)...)
+	allMetrics = append(allMetrics, deprecatedStatusMetrics(statusObjects)...)
+	allMetrics = append(allMetrics, hardcodedMetrics()...)
 
 	// Dedupe metrics
 	allMetrics = lo.UniqBy(allMetrics, func(m metricInfo) string {
@@ -106,6 +298,18 @@ func main() {
 		}
 	}
 	sort.Slice(allMetrics, bySubsystem(allMetrics))
+
+	// Surface metrics whose label argument couldn't be resolved (built by an
+	// unparseable helper, etc.). These render with no dimensions; print them so the
+	// gap is visible rather than silently shipping an incomplete doc.
+	if len(unresolvedLabelMetrics) > 0 {
+		slices.Sort(unresolvedLabelMetrics)
+		unresolvedLabelMetrics = slices.Compact(unresolvedLabelMetrics)
+		fmt.Fprintf(os.Stderr, "WARNING: %d metric(s) have an unresolvable label argument; their dimensions are omitted from the docs:\n", len(unresolvedLabelMetrics))
+		for _, m := range unresolvedLabelMetrics {
+			fmt.Fprintf(os.Stderr, "  - %s\n", m)
+		}
+	}
 
 	// Sanity check: fail loudly if the metric count drops below expected.
 	// This catches silent regressions where new identifier mappings are needed
@@ -164,9 +368,68 @@ description: >
 		default:
 			fmt.Fprintf(f, "- Stability Level: %s\n", "ALPHA")
 		}
+		if dims := formatDimensions(metric); dims != "" {
+			fmt.Fprintf(f, "- Dimensions:%s\n", dims)
+		}
 		fmt.Fprintln(f)
 	}
 
+}
+
+// formatDimensions renders a metric's dimensions as a markdown sub-list. Each
+// dimension carries its help text (sourced from the code-defined metrics.Label or
+// a third-party injection) and, where the set of values is known and stable, the
+// list of values. The returned string begins with a leading newline so it renders
+// as a nested list under the "- Dimensions:" line.
+func formatDimensions(m metricInfo) string {
+	if len(m.labels) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, l := range m.labels {
+		b.WriteString(fmt.Sprintf("\n  - `%s`", l))
+		info, ok := describeLabel(m.subsystem, l, m.labelScope)
+		// A Label resolved directly from THIS metric's []Label argument is
+		// authoritative — it carries the specific help/values the metric emits, which
+		// disambiguates dimensions (e.g. `reason`) reused with different values across
+		// metrics that the by-name global registry collapses.
+		if mi, has := m.labelInfos[l]; has {
+			info, ok = mi, true
+		}
+		if ok && info.help != "" {
+			b.WriteString(fmt.Sprintf(" — %s", info.help))
+		}
+		// A metric-specific value set (e.g. per-object condition types) overrides the
+		// dimension's global values.
+		values := info.values
+		if override, ok := m.labelValues[l]; ok {
+			values = override
+		}
+		// A provider may contribute extra values to a core metric's dimension when it
+		// emits them (e.g. the AWS interruption handler emits EC2 event kinds into the
+		// core nodeclaims_disrupted_total `reason`). Merge them in, deduped.
+		if varName, ok := reasonValueContributions[m.qualifiedName()]; ok && l == metrics.ReasonLabel {
+			seen := map[string]bool{}
+			for _, v := range values {
+				seen[v.name] = true
+			}
+			for _, v := range valueSliceSymbols[varName] {
+				if !seen[v.name] {
+					values = append(values, v)
+					seen[v.name] = true
+				}
+			}
+		}
+		// Render each documented value as a nested sub-list item, with its own help
+		// where available.
+		for _, v := range values {
+			b.WriteString(fmt.Sprintf("\n    - `%s`", v.name))
+			if v.help != "" {
+				b.WriteString(fmt.Sprintf(" — %s", v.help))
+			}
+		}
+	}
+	return b.String()
 }
 
 func getPackages(root string) []*ast.Package {
@@ -237,8 +500,8 @@ func bySubsystem(metrics []metricInfo) func(i int, j int) bool {
 		"ec2nodeclass_status_condition": 3,
 		"ec2nodeclass_termination":      3,
 		"status_condition":              -1,
-		"termination":                  -1,
-		"workqueue":                    -1,
+		"termination":                   -1,
+		"workqueue":                     -1,
 		"client_go":                     -1,
 		"aws_sdk_go":                    -1,
 		"leader_election":               -2,
@@ -254,67 +517,162 @@ func bySubsystem(metrics []metricInfo) func(i int, j int) bool {
 	}
 }
 
-// perObjectStatusMetrics generates metrics for the operatorpkg status and events controllers.
-// These metrics are dynamically created at runtime based on the Go type parameter passed to
-// status.NewController[T]() and cannot be extracted via AST parsing. The object types are
-// determined by the status controller registrations in karpenter and karpenter-provider-aws.
-func perObjectStatusMetrics() []metricInfo {
-	// Object types that have status controllers registered via status.NewController[T]()
-	// in karpenter (nodeclaim, nodepool, node) and karpenter-provider-aws (ec2nodeclass).
-	objectNames := []string{"nodeclaim", "nodepool", "node", "ec2nodeclass"}
+// statusObject is a type that has a status controller registered via
+// status.NewController[T](), parsed from the registration sites.
+type statusObject struct {
+	kind      string // the object Kind, e.g. "NodeClaim"
+	subsystem string // the metric subsystem prefix, e.g. "nodeclaim"
+}
 
-	type metricTemplate struct {
-		subsystemSuffix string
-		name            string
-		help            string
-	}
-
-	templates := []metricTemplate{
-		{"status_condition", "transition_seconds", "The amount of time a condition was in a given state before transitioning. e.g. Alarm := P99(Updated=False) > 5 minutes"},
-		{"status_condition", "count", "The number of a condition for a given object, type and status. e.g. Alarm := Available=False > 0"},
-		{"status_condition", "current_status_seconds", "The current amount of time in seconds that a status condition has been in a specific state. Alarm := P99(Updated=Unknown) > 5 minutes"},
-		{"status_condition", "transitions_total", "The count of transitions of a given object, type and status."},
-		{"termination", "current_time_seconds", "The current amount of time in seconds that an object has been in terminating state."},
-		{"termination", "duration_seconds", "The amount of time taken by an object to terminate completely."},
-	}
-
-	var metricsOut []metricInfo
-	for _, obj := range objectNames {
-		for _, t := range templates {
-			metricsOut = append(metricsOut, metricInfo{
-				namespace: "operator",
-				subsystem: fmt.Sprintf("%s_%s", obj, t.subsystemSuffix),
-				name:      t.name,
-				help:      t.help,
+// parseStatusControllerObjects finds status.NewController[T]() registrations across
+// the scanned packages and returns the object types they register. This is the
+// authoritative, self-maintaining source for which per-object status/termination
+// metrics exist (replacing a hardcoded list).
+func parseStatusControllerObjects(packages []*ast.Package) []statusObject {
+	seen := map[string]statusObject{}
+	for _, pkg := range packages {
+		for _, file := range pkg.Files {
+			ast.Inspect(file, func(n ast.Node) bool {
+				ce, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				// A generic call fn[T](...) parses as a call whose Fun is an IndexExpr
+				// (one type arg) or IndexListExpr (several). status.NewController[T]().
+				var fun ast.Expr
+				var typeArg ast.Expr
+				switch idx := ce.Fun.(type) {
+				case *ast.IndexExpr:
+					fun, typeArg = idx.X, idx.Index
+				case *ast.IndexListExpr:
+					if len(idx.Indices) == 0 {
+						return true
+					}
+					fun, typeArg = idx.X, idx.Indices[0]
+				default:
+					return true
+				}
+				// Match operatorpkg's status.NewController[T](), not any generic function
+				// that happens to be named NewController.
+				sel, ok := fun.(*ast.SelectorExpr)
+				if !ok || sel.Sel.Name != "NewController" {
+					return true
+				}
+				if pkgIdent, ok := sel.X.(*ast.Ident); !ok || pkgIdent.Name != "status" {
+					return true
+				}
+				if kind := identName(typeArg); kind != "" {
+					seen[kind] = statusObject{kind: kind, subsystem: strings.ToLower(kind)}
+				}
+				return true
 			})
 		}
 	}
-
-	// Deprecated generic metrics (without object name prefix) are still emitted at runtime
-	// when emitDeprecatedMetrics is enabled on the status controller. These use group/kind
-	// labels instead of baking the object name into the subsystem.
-	for _, t := range templates {
-		metricsOut = append(metricsOut, metricInfo{
-			namespace: "operator",
-			subsystem: t.subsystemSuffix,
-			name:      t.name,
-			help:      t.help,
-		})
-	}
-
-	// client_go metrics are registered inside operatorpkg's RegisterClientMetrics() function
-	// using unqualified NewPrometheus* calls (same package). These can't be parsed via AST
-	// since we only recognize qualified opmetrics.* and prometheus.* calls.
-	metricsOut = append(metricsOut,
-		metricInfo{name: "client_go_request_duration_seconds", help: "Request latency in seconds. Broken down by verb, group, version, kind, and subresource."},
-		metricInfo{name: "client_go_request_total", help: "Number of HTTP requests, partitioned by status code and method."},
-	)
-
-	return metricsOut
+	objs := lo.Values(seen)
+	sort.Slice(objs, func(i, j int) bool { return objs[i].subsystem < objs[j].subsystem })
+	return objs
 }
 
-// metricFromCallExpr attempts to extract metric info from a call expression.
-// It recognizes prometheus.New*(), opmetrics.NewPrometheus*(), and pmetrics.NewPrometheus*() calls.
+// statusMetricTemplate describes one operatorpkg status/termination metric family:
+// the subsystem suffix, metric name, help, and the base dimensions it always carries
+// (in operatorpkg's declared order — see operatorpkg status/metrics.go). Per-object
+// controllers may append registration-specific labels at runtime that can't be
+// determined statically; those are omitted.
+type statusMetricTemplate struct {
+	subsystemSuffix string
+	name            string
+	help            string
+	labels          []string
+}
+
+func statusMetricTemplates() []statusMetricTemplate {
+	return []statusMetricTemplate{
+		{"status_condition", "transition_seconds", "The amount of time a condition was in a given state before transitioning. e.g. Alarm := P99(Updated=False) > 5 minutes", []string{"type", "status", "to_status"}},
+		{"status_condition", "count", "The number of a condition for a given object, type and status. e.g. Alarm := Available=False > 0", []string{"namespace", "name", "type", "status", "reason"}},
+		{"status_condition", "current_status_seconds", "The current amount of time in seconds that a status condition has been in a specific state. Alarm := P99(Updated=Unknown) > 5 minutes", []string{"namespace", "name", "type", "status", "reason"}},
+		{"status_condition", "transitions_total", "The count of transitions of a given object, type and status.", []string{"type", "status", "reason"}},
+		{"termination", "current_time_seconds", "The current amount of time in seconds that an object has been in terminating state.", []string{"namespace", "name"}},
+		{"termination", "duration_seconds", "The amount of time taken by an object to terminate completely.", nil},
+	}
+}
+
+// perObjectStatusMetrics synthesizes the metrics operatorpkg's status controller
+// creates per registered object type. operatorpkg creates them at runtime from the
+// type parameter of status.NewController[T](), so they can't be read from a metric
+// declaration; objects is the set parsed from those registration sites.
+func perObjectStatusMetrics(objects []statusObject) []metricInfo {
+	var out []metricInfo
+	for _, obj := range objects {
+		for _, t := range statusMetricTemplates() {
+			// The `type` dimension of an object's status-condition metrics enumerates
+			// that object's condition types.
+			var labelValues map[string][]valueInfo
+			if types, ok := conditionTypesByKind[obj.kind]; ok && slices.Contains(t.labels, "type") {
+				labelValues = map[string][]valueInfo{"type": types}
+			}
+			out = append(out, metricInfo{
+				namespace:   "operator",
+				subsystem:   fmt.Sprintf("%s_%s", obj.subsystem, t.subsystemSuffix),
+				name:        t.name,
+				help:        t.help,
+				labels:      t.labels,
+				labelScope:  "operatorpkg",
+				labelValues: labelValues,
+			})
+		}
+	}
+	return out
+}
+
+// deprecatedStatusMetrics synthesizes the deprecated generic status/termination
+// metrics (no object-name prefix), still emitted when emitDeprecatedMetrics is set.
+// They carry group/kind labels instead of baking the object into the subsystem, so
+// their kind/type dimensions span every registered object.
+func deprecatedStatusMetrics(objects []statusObject) []metricInfo {
+	allKinds := lo.Map(objects, func(o statusObject, _ int) valueInfo { return valueInfo{name: o.kind} })
+	var allTypes []valueInfo
+	for _, o := range objects {
+		allTypes = append(allTypes, conditionTypesByKind[o.kind]...)
+	}
+	// A condition type (e.g. ValidationSucceeded) can be set by more than one object;
+	// dedupe by name so the union lists each once.
+	allTypes = lo.UniqBy(allTypes, func(v valueInfo) string { return v.name })
+
+	var out []metricInfo
+	for _, t := range statusMetricTemplates() {
+		labelValues := map[string][]valueInfo{"kind": allKinds}
+		if slices.Contains(t.labels, "type") && len(allTypes) > 0 {
+			labelValues["type"] = allTypes
+		}
+		out = append(out, metricInfo{
+			namespace:   "operator",
+			subsystem:   t.subsystemSuffix,
+			name:        t.name,
+			help:        t.help,
+			labels:      slices.Concat(t.labels, []string{"group", "kind"}),
+			labelScope:  "operatorpkg",
+			labelValues: labelValues,
+		})
+	}
+	return out
+}
+
+// hardcodedMetrics are metrics that can't be parsed from any declaration: operatorpkg
+// registers the client_go metrics inside RegisterClientMetrics() via unqualified
+// NewPrometheus* calls (same package), which the generator doesn't recognize.
+func hardcodedMetrics() []metricInfo {
+	return []metricInfo{
+		{name: "client_go_request_duration_seconds", help: "Request latency in seconds. Broken down by verb, group, version, kind, and subresource.", labels: []string{"verb", "group", "version", "kind", "subresource"}},
+		{name: "client_go_request_total", help: "Number of HTTP requests, partitioned by status code and method.", labels: []string{"code", "method"}},
+	}
+}
+
+// metricFromCallExpr attempts to extract metric info from a call expression. It
+// recognizes prometheus.New*() and opmetrics.NewPrometheus*() calls. operatorpkg's
+// own metric constructors (the pmetrics.* alias) are deliberately NOT parsed here:
+// they build per-object metrics dynamically from a runtime type parameter, so their
+// opts (e.g. a computed Subsystem) can't be resolved statically; those metrics are
+// synthesized instead by perObjectStatusMetrics.
 func metricFromCallExpr(ce *ast.CallExpr) (metricInfo, bool) {
 	funcPkg := getFuncPackage(ce.Fun)
 	// Determine the index of the opts argument based on the package.
@@ -356,17 +714,24 @@ func metricFromCallExpr(ce *ast.CallExpr) (metricInfo, bool) {
 			value = val.Value
 		case *ast.SelectorExpr:
 			selector := fmt.Sprintf("%s.%s", val.X, val.Sel)
-			v, err := getIdentMapping(selector)
-			if err != nil {
+			// Prefer the curated identifier mapping (which intentionally overrides
+			// some values, e.g. pluralizing subsystems), then fall back to the
+			// resolved package-level string constant.
+			if v, err := getIdentMapping(selector); err == nil {
+				value = v
+			} else if s, ok := resolveStringExpr(val); ok {
+				value = s
+			} else {
 				log.Fatalf("unresolvable selector %s for key %s: %s", selector, key, err)
 			}
-			value = v
 		case *ast.Ident:
-			v, err := getIdentMapping(val.String())
-			if err != nil {
+			if v, err := getIdentMapping(val.String()); err == nil {
+				value = v
+			} else if s, ok := resolveStringExpr(val); ok {
+				value = s
+			} else {
 				log.Fatalf("unresolvable identifier %q for key %s: %s", val.String(), key, err)
 			}
-			value = v
 		case *ast.BinaryExpr:
 			value = getBinaryExpr(val)
 		default:
@@ -377,12 +742,676 @@ func metricFromCallExpr(ce *ast.CallExpr) (metricInfo, bool) {
 			return r == '"'
 		})
 	}
+	// The label names (dimensions) are the argument immediately after the opts
+	// argument: prometheus.New*Vec(opts, labels) and
+	// opmetrics.NewPrometheus*(registry, opts, labels). Non-vector metrics have no
+	// such argument. Resolution is best-effort: metrics whose labels cannot be fully
+	// resolved simply omit the Dimensions line rather than emit partial/incorrect data.
+	var labels []string
+	var labelInfos map[string]labelInfo
+	if labelsIdx := optsIdx + 1; len(ce.Args) > labelsIdx {
+		if names, infos, ok := resolveLabelDimensions(ce.Args[labelsIdx]); ok {
+			labels = names
+			labelInfos = infos
+		} else {
+			// The metric has a label argument we couldn't resolve (e.g. built by a
+			// helper function). Record it so the omission is surfaced, not silent.
+			unresolvedLabelMetrics = append(unresolvedLabelMetrics,
+				strings.Trim(strings.Join([]string{keyValuePairs["Namespace"], keyValuePairs["Subsystem"], keyValuePairs["Name"]}, "_"), "_"))
+		}
+	}
 	return metricInfo{
-		namespace: keyValuePairs["Namespace"],
-		subsystem: keyValuePairs["Subsystem"],
-		name:      keyValuePairs["Name"],
-		help:      keyValuePairs["Help"],
+		namespace:  keyValuePairs["Namespace"],
+		subsystem:  keyValuePairs["Subsystem"],
+		name:       keyValuePairs["Name"],
+		help:       keyValuePairs["Help"],
+		labels:     labels,
+		labelInfos: labelInfos,
 	}, true
+}
+
+// collectSymbols scans all package-level constant and variable declarations across
+// the parsed packages, recording string-valued names (for label constants such as
+// ReasonLabel = "reason") and []string-valued names (for shared label slices such as
+// the aws-sdk-go-prometheus `labels` var). Names that resolve to conflicting values
+// across packages are marked ambiguous and treated as unresolvable.
+func collectSymbols(packages []*ast.Package) {
+	// Pass 1: string constants/variables.
+	forEachValueSpec(packages, func(_, name string, value ast.Expr) {
+		if s, ok := stringLiteralValue(value); ok {
+			if existing, seen := stringSymbols[name]; seen && existing != s {
+				ambiguousStrings[name] = true
+				return
+			}
+			stringSymbols[name] = s
+		}
+	})
+	// Pass 1b: resolve alias declarations such as `const X = Y` or
+	// `const X = pkg.Y`, where Y is itself a known string symbol. This lets label
+	// name consts that dedupe to a shared const (e.g. metricLabelController =
+	// metrics.ControllerLabel) resolve to their underlying value. A few iterations
+	// reach a fixpoint that handles aliases-of-aliases.
+	const aliasResolutionPasses = 3
+	for range aliasResolutionPasses {
+		changed := false
+		forEachValueSpec(packages, func(_, name string, value ast.Expr) {
+			if _, seen := stringSymbols[name]; seen {
+				return
+			}
+			switch value.(type) {
+			case *ast.Ident, *ast.SelectorExpr:
+				if s, ok := resolveStringExpr(value); ok {
+					stringSymbols[name] = s
+					changed = true
+				}
+			}
+		})
+		if !changed {
+			break
+		}
+	}
+	// Pass 2: []string composite literals (may reference the string symbols above).
+	forEachValueSpec(packages, func(_, name string, value ast.Expr) {
+		cl, ok := value.(*ast.CompositeLit)
+		if !ok {
+			return
+		}
+		vals, ok := stringSliceFromCompositeLit(cl)
+		if !ok {
+			return
+		}
+		if existing, seen := sliceSymbols[name]; seen && !slices.Equal(existing, vals) {
+			ambiguousSlices[name] = true
+			return
+		}
+		sliceSymbols[name] = vals
+	})
+	// Pass 3: single Value vars (first-class dimension values referenced by name from
+	// a []Value literal, e.g. a metrics-owned error category).
+	forEachValueSpec(packages, func(_, name string, value ast.Expr) {
+		cl, ok := value.(*ast.CompositeLit)
+		if !ok || identName(cl.Type) != "Value" {
+			return
+		}
+		if v, ok := valueFromCompositeLit(cl); ok {
+			valueSymbols[name] = v
+		}
+	})
+	// Pass 4: []Value composite literals (shared value sets referenced by a Label's
+	// Values field, e.g. operatorpkg's conditionStatusValues). Runs after Pass 3 so
+	// elements that reference a single Value var resolve.
+	forEachValueSpec(packages, func(_, name string, value ast.Expr) {
+		cl, ok := value.(*ast.CompositeLit)
+		if !ok || !isValueSliceType(cl.Type) {
+			return
+		}
+		if vals, ok := valueSliceFromCompositeLit(cl); ok {
+			valueSliceSymbols[name] = vals
+		}
+	})
+	// Pass 5: the per-Kind condition-type registry (karpenter's
+	// metrics.ConditionTypeValues map), used to document the `type` dimension of
+	// each object's status-condition metrics.
+	collectConditionTypes(packages)
+}
+
+// collectConditionTypes scans for a map[string][]Value composite literal (karpenter's
+// metrics.ConditionTypeValues) and records each Kind's status condition types.
+func collectConditionTypes(packages []*ast.Package) {
+	forEachValueSpec(packages, func(_, _ string, value ast.Expr) {
+		cl, ok := value.(*ast.CompositeLit)
+		if !ok {
+			return
+		}
+		mt, ok := cl.Type.(*ast.MapType)
+		if !ok {
+			return
+		}
+		if key, ok := mt.Key.(*ast.Ident); !ok || key.Name != "string" {
+			return
+		}
+		if !isValueSliceType(mt.Value) {
+			return
+		}
+		for _, el := range cl.Elts {
+			kv, ok := el.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			kind, ok := resolveStringExpr(kv.Key)
+			if !ok {
+				continue
+			}
+			if vals, ok := resolveValues(kv.Value); ok {
+				conditionTypesByKind[kind] = vals
+			}
+		}
+	})
+}
+
+// collectLabels scans package-level var declarations for metrics.Label{...}
+// composite literals and records each label's help text and stable values keyed by
+// its resolved Name. This is the code-sourced registry the docs generator uses to
+// annotate each metric dimension. Entries are merged by name: an entry that carries
+// help text is preferred over one that does not, so a fully-documented shared Label
+// wins over a bare reference elsewhere.
+func collectLabels(packages []*ast.Package) {
+	forEachValueSpec(packages, func(file, varName string, value ast.Expr) {
+		cl, ok := value.(*ast.CompositeLit)
+		if !ok || !isLabelType(cl.Type) {
+			return
+		}
+		fields := namedFields(cl)
+		name, ok := resolveStringExpr(fields["Name"])
+		if !ok {
+			return
+		}
+		help, _ := resolveStringExpr(fields["Help"])
+		values, _ := resolveValues(fields["Values"])
+		info := labelInfo{help: help, values: values}
+		// Record by Go var name so a metric can resolve the SPECIFIC Label it
+		// references, independent of dimension-name collisions in the registry. If the
+		// same var name is declared in two packages with DIFFERENT docs (e.g. a
+		// `managedLabel` in both the pod and node controllers), we can't tell them
+		// apart from a bare identifier, so mark it ambiguous and emit no help rather
+		// than confidently-wrong help.
+		if varName != "" {
+			if existing, seen := labelVarInfo[varName]; seen && existing.help != info.help {
+				ambiguousLabelVars[varName] = true
+			}
+			labelVarName[varName] = name
+			labelVarInfo[varName] = info
+		}
+		// A Label is recorded in the registry for its declaring code base. Labels from
+		// a scoped code base (operatorpkg) go ONLY into that scope, not the global
+		// registry, so a name reused with a different meaning (e.g. `reason`) doesn't
+		// leak operatorpkg's docs onto unrelated karpenter/third-party metrics; only
+		// metrics that opt into the scope resolve there. First entry with help wins.
+		registry := labelRegistry
+		if scope := labelScopeForFile(file); scope != "" {
+			if scopedLabelRegistry[scope] == nil {
+				scopedLabelRegistry[scope] = map[string]labelInfo{}
+			}
+			registry = scopedLabelRegistry[scope]
+		}
+		if existing, seen := registry[name]; !seen || (existing.help == "" && help != "") {
+			registry[name] = info
+		}
+	})
+}
+
+// collectLabelSlices records package-level []opmetrics.Label variables (inline
+// literals or append(...)-composed) so a metric whose label argument references one
+// resolves to its dimensions. Runs after collectLabels so the element Label vars are
+// already resolved.
+func collectLabelSlices(packages []*ast.Package) {
+	forEachValueSpec(packages, func(_, varName string, value ast.Expr) {
+		if varName == "" {
+			return
+		}
+		switch v := value.(type) {
+		case *ast.CompositeLit:
+			if !isLabelSliceType(v.Type) {
+				return
+			}
+		case *ast.CallExpr:
+			if id, ok := v.Fun.(*ast.Ident); !ok || id.Name != "append" {
+				return
+			}
+		default:
+			return
+		}
+		if names, infos, ok := resolveLabelDimensions(value); ok {
+			labelSliceSymbols[varName] = labelSlice{names: names, infos: infos}
+		}
+	})
+}
+
+// collectFuncReturns records package-level helper functions whose body is a single
+// `return <expr>` statement, keyed by name, so a metric whose label argument is a
+// call to such a helper (e.g. labelNames(), nodeLabelNames()) resolves by inlining
+// the returned expression. Functions with parameters are still recorded (the label
+// helpers take none); a same-named function in another package overwrites (rare).
+func collectFuncReturns(packages []*ast.Package) {
+	for _, pkg := range packages {
+		for _, file := range pkg.Files {
+			for _, decl := range file.Decls {
+				fd, ok := decl.(*ast.FuncDecl)
+				if !ok || fd.Recv != nil || fd.Body == nil || len(fd.Body.List) != 1 {
+					continue
+				}
+				ret, ok := fd.Body.List[0].(*ast.ReturnStmt)
+				if !ok || len(ret.Results) != 1 {
+					continue
+				}
+				funcReturns[fd.Name.Name] = ret.Results[0]
+			}
+		}
+	}
+}
+
+// funcCallName returns the called function's name for a bare or package-qualified
+// call target, or "" for anything else.
+func funcCallName(fun ast.Expr) string {
+	switch f := fun.(type) {
+	case *ast.Ident:
+		return f.Name
+	case *ast.SelectorExpr:
+		return f.Sel.Name
+	}
+	return ""
+}
+
+// identName returns the identifier name of a (possibly pointer, possibly
+// package-qualified) type/name expression, e.g. Label -> "Label",
+// metrics.Value -> "Value", *v1.NodeClaim -> "NodeClaim".
+func identName(t ast.Expr) string {
+	switch v := t.(type) {
+	case *ast.StarExpr:
+		return identName(v.X)
+	case *ast.SelectorExpr:
+		return v.Sel.Name
+	case *ast.Ident:
+		return v.Name
+	}
+	return ""
+}
+
+// isLabelType reports whether a composite literal's type is a metrics.Label.
+func isLabelType(t ast.Expr) bool { return identName(t) == "Label" }
+
+// isValueSliceType reports whether an expression's type is []Value (a metrics.Value slice).
+func isValueSliceType(t ast.Expr) bool {
+	at, ok := t.(*ast.ArrayType)
+	return ok && identName(at.Elt) == "Value"
+}
+
+// namedFields returns the key->value expressions of a struct composite literal's
+// keyed fields, e.g. {Name: x, Help: y} -> {"Name": x, "Help": y}.
+func namedFields(cl *ast.CompositeLit) map[string]ast.Expr {
+	out := map[string]ast.Expr{}
+	for _, el := range cl.Elts {
+		if kv, ok := el.(*ast.KeyValueExpr); ok {
+			if key, ok := kv.Key.(*ast.Ident); ok {
+				out[key.Name] = kv.Value
+			}
+		}
+	}
+	return out
+}
+
+// valueFromCompositeLit resolves a single Value{Name: ..., Help: ...} composite
+// literal. Name is resolved through the string symbol table so it may reference a
+// const; a Value whose Name cannot be resolved is reported as not ok.
+func valueFromCompositeLit(cl *ast.CompositeLit) (valueInfo, bool) {
+	fields := namedFields(cl)
+	name, ok := resolveStringExpr(fields["Name"])
+	if !ok {
+		return valueInfo{}, false
+	}
+	help, _ := resolveStringExpr(fields["Help"])
+	return valueInfo{name: name, help: help}, true
+}
+
+// valueSliceFromCompositeLit resolves a []Value composite literal to its documented
+// values. Each element is either an inline Value{...} literal or a reference to a
+// named Value var. An element whose Name cannot be resolved (e.g. it references a
+// const in an unscanned package) is skipped rather than discarding the whole slice.
+func valueSliceFromCompositeLit(cl *ast.CompositeLit) ([]valueInfo, bool) {
+	if cl.Type != nil && !isValueSliceType(cl.Type) {
+		return nil, false
+	}
+	out := make([]valueInfo, 0, len(cl.Elts))
+	for _, el := range cl.Elts {
+		if v, ok := resolveValue(el); ok {
+			out = append(out, v)
+		}
+	}
+	return out, true
+}
+
+// resolveValue resolves a single []Value element: an inline Value{...} literal or a
+// reference to a named Value var.
+func resolveValue(expr ast.Expr) (valueInfo, bool) {
+	if cl, ok := expr.(*ast.CompositeLit); ok {
+		return valueFromCompositeLit(cl)
+	}
+	if v, ok := valueSymbols[identName(expr)]; ok {
+		return v, true
+	}
+	return valueInfo{}, false
+}
+
+// resolveValues resolves a Label's Values field, handling both an inline []Value
+// composite literal and a reference to a named []Value variable (e.g. a shared
+// conditionStatusValues var).
+func resolveValues(expr ast.Expr) ([]valueInfo, bool) {
+	switch v := expr.(type) {
+	case *ast.CompositeLit:
+		return valueSliceFromCompositeLit(v)
+	case *ast.Ident:
+		if vals, ok := valueSliceSymbols[v.Name]; ok {
+			return vals, true
+		}
+	case *ast.SelectorExpr:
+		if vals, ok := valueSliceSymbols[v.Sel.Name]; ok {
+			return vals, true
+		}
+	case *ast.CallExpr:
+		// append(base, elem, ...) / append(base, spread...) — flatten a composed
+		// []Value: resolve the base slice, then each appended element (a trailing
+		// `xs...` spread is itself a []Value; a bare element is a single Value).
+		if id, ok := v.Fun.(*ast.Ident); !ok || id.Name != "append" || len(v.Args) == 0 {
+			return nil, false
+		}
+		out, _ := resolveValues(v.Args[0])
+		rest := v.Args[1:]
+		for i, arg := range rest {
+			if v.Ellipsis.IsValid() && i == len(rest)-1 {
+				if vals, ok := resolveValues(arg); ok {
+					out = append(out, vals...)
+				}
+				continue
+			}
+			if val, ok := resolveValue(arg); ok {
+				out = append(out, val)
+			}
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+// forEachValueSpec invokes fn for every (file, name, value) tuple in package-level
+// const/var declarations across the given packages. file is the path of the source
+// file the declaration was parsed from, used to attribute a declaration to a code base.
+func forEachValueSpec(packages []*ast.Package, fn func(file, name string, value ast.Expr)) {
+	for _, pkg := range packages {
+		// Iterate files in a stable order; pkg.Files is a map, so ranging it directly
+		// would make "first entry wins" resolution (and thus the docs) nondeterministic.
+		for _, filePath := range slices.Sorted(maps.Keys(pkg.Files)) {
+			file := pkg.Files[filePath]
+			for _, decl := range file.Decls {
+				gd, ok := decl.(*ast.GenDecl)
+				if !ok || (gd.Tok != token.CONST && gd.Tok != token.VAR) {
+					continue
+				}
+				for _, spec := range gd.Specs {
+					vs, ok := spec.(*ast.ValueSpec)
+					if !ok {
+						continue
+					}
+					for i, nm := range vs.Names {
+						if i < len(vs.Values) {
+							fn(filePath, nm.Name, vs.Values[i])
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// stringLiteralValue returns the unquoted value of a string literal expression.
+// It uses strconv.Unquote so that only the delimiters are removed (and escapes
+// are decoded); a naive trim would strip backticks that are part of the content,
+// e.g. help text like "... or `expired`".
+func stringLiteralValue(expr ast.Expr) (string, bool) {
+	bl, ok := expr.(*ast.BasicLit)
+	if !ok || bl.Kind != token.STRING {
+		return "", false
+	}
+	s, err := strconv.Unquote(bl.Value)
+	if err != nil {
+		return "", false
+	}
+	return s, true
+}
+
+// stringSliceFromCompositeLit resolves a []string composite literal to its string
+// values, resolving element identifiers via the string symbol table.
+func stringSliceFromCompositeLit(cl *ast.CompositeLit) ([]string, bool) {
+	if at, ok := cl.Type.(*ast.ArrayType); ok {
+		if id, ok := at.Elt.(*ast.Ident); !ok || id.Name != "string" {
+			return nil, false
+		}
+	} else if cl.Type != nil {
+		return nil, false
+	}
+	out := make([]string, 0, len(cl.Elts))
+	for _, el := range cl.Elts {
+		s, ok := resolveStringExpr(el)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, s)
+	}
+	return out, true
+}
+
+// resolveLabelDimensions resolves a metric's label argument into its ordered
+// dimension names and, when the argument is a []opmetrics.Label{...} literal, the
+// per-dimension documentation resolved directly from the referenced Labels. It
+// first tries the legacy []string forms (inline literal or named []string var),
+// then the []opmetrics.Label{...} form.
+// labelSlice is a resolved []opmetrics.Label: the ordered dimension names plus
+// per-dimension documentation.
+type labelSlice struct {
+	names []string
+	infos map[string]labelInfo
+}
+
+func resolveLabelDimensions(expr ast.Expr) ([]string, map[string]labelInfo, bool) {
+	// Legacy/shared []string name slices and named []string vars.
+	if names, ok := resolveLabels(expr); ok {
+		return names, nil, true
+	}
+	switch v := expr.(type) {
+	case *ast.CompositeLit:
+		if isLabelSliceType(v.Type) {
+			ls := labelSliceFromElts(v.Elts)
+			// An explicitly empty []Label{} is a resolved "no dimensions" — only treat
+			// it as unresolved if it had elements we couldn't resolve.
+			if len(v.Elts) > 0 && len(ls.names) == 0 {
+				return nil, nil, false
+			}
+			return ls.names, ls.infos, true
+		}
+	case *ast.Ident:
+		// Named []opmetrics.Label variable (e.g. a controller's hoisted label set).
+		if ls, ok := labelSliceSymbols[v.Name]; ok {
+			return ls.names, ls.infos, true
+		}
+	case *ast.SelectorExpr:
+		if ls, ok := labelSliceSymbols[v.Sel.Name]; ok {
+			return ls.names, ls.infos, true
+		}
+	case *ast.CallExpr:
+		// A call to a local helper whose body is `return <expr>` (e.g. labelNames() /
+		// nodeLabelNames()): resolve by inlining that return expression.
+		if id, ok := v.Fun.(*ast.Ident); !ok || id.Name != "append" || len(v.Args) == 0 {
+			if name := funcCallName(v.Fun); name != "" && !resolvingFuncs[name] {
+				if ret, ok := funcReturns[name]; ok {
+					resolvingFuncs[name] = true
+					n, i, ok := resolveLabelDimensions(ret)
+					delete(resolvingFuncs, name)
+					return n, i, ok
+				}
+			}
+			return nil, nil, false
+		}
+		// append(base, elem, ...) / append(base, spread...) — flatten a composed
+		// []Label. Unresolvable pieces (e.g. a dynamic well-known-label helper) are
+		// skipped so the statically-known dimensions are still documented.
+		merged := labelSlice{infos: map[string]labelInfo{}}
+		add := func(names []string, infos map[string]labelInfo) {
+			for _, n := range names {
+				merged.names = append(merged.names, n)
+				if infos != nil {
+					merged.infos[n] = infos[n]
+				}
+			}
+		}
+		if names, infos, ok := resolveLabelDimensions(v.Args[0]); ok {
+			add(names, infos)
+		}
+		rest := v.Args[1:]
+		for i, arg := range rest {
+			if v.Ellipsis.IsValid() && i == len(rest)-1 {
+				if names, infos, ok := resolveLabelDimensions(arg); ok {
+					add(names, infos)
+				}
+				continue
+			}
+			if name, info, ok := labelInfoFromExpr(arg); ok {
+				merged.names = append(merged.names, name)
+				merged.infos[name] = info
+			}
+		}
+		if len(merged.names) == 0 {
+			return nil, nil, false
+		}
+		return merged.names, merged.infos, true
+	}
+	return nil, nil, false
+}
+
+// labelSliceFromElts resolves the elements of a []opmetrics.Label composite literal.
+// An element that can't be resolved is skipped rather than dropping the whole slice.
+func labelSliceFromElts(elts []ast.Expr) labelSlice {
+	ls := labelSlice{infos: map[string]labelInfo{}}
+	for _, el := range elts {
+		name, info, ok := labelInfoFromExpr(el)
+		if !ok {
+			continue
+		}
+		ls.names = append(ls.names, name)
+		ls.infos[name] = info
+	}
+	return ls
+}
+
+// isLabelSliceType reports whether an expression's type is []Label (an
+// opmetrics.Label slice).
+func isLabelSliceType(t ast.Expr) bool {
+	at, ok := t.(*ast.ArrayType)
+	return ok && identName(at.Elt) == "Label"
+}
+
+// labelInfoFromExpr resolves one element of a []opmetrics.Label{...} literal to its
+// dimension name and documentation: an inline Label{...} literal, or a reference to
+// a named Label var (bare ident or pkg-qualified selector).
+func labelInfoFromExpr(el ast.Expr) (string, labelInfo, bool) {
+	switch v := el.(type) {
+	case *ast.CompositeLit:
+		fields := namedFields(v)
+		name, ok := resolveStringExpr(fields["Name"])
+		if !ok {
+			return "", labelInfo{}, false
+		}
+		help, _ := resolveStringExpr(fields["Help"])
+		values, _ := resolveValues(fields["Values"])
+		return name, labelInfo{help: help, values: values}, true
+	case *ast.Ident:
+		if name, ok := labelVarName[v.Name]; ok {
+			if ambiguousLabelVars[v.Name] {
+				return name, labelInfo{}, true
+			}
+			return name, labelVarInfo[v.Name], true
+		}
+	case *ast.SelectorExpr:
+		if name, ok := labelVarName[v.Sel.Name]; ok {
+			if ambiguousLabelVars[v.Sel.Name] {
+				return name, labelInfo{}, true
+			}
+			return name, labelVarInfo[v.Sel.Name], true
+		}
+	}
+	return "", labelInfo{}, false
+}
+
+// resolveLabels resolves a metric's label-names argument to a slice of label names,
+// handling both an inline []string composite literal and a reference to a named
+// []string variable.
+func resolveLabels(expr ast.Expr) ([]string, bool) {
+	switch v := expr.(type) {
+	case *ast.CompositeLit:
+		return stringSliceFromCompositeLit(v)
+	case *ast.Ident:
+		if ambiguousSlices[v.Name] {
+			return nil, false
+		}
+		if s, ok := sliceSymbols[v.Name]; ok {
+			return s, true
+		}
+	case *ast.SelectorExpr:
+		if ambiguousSlices[v.Sel.Name] {
+			return nil, false
+		}
+		if s, ok := sliceSymbols[v.Sel.Name]; ok {
+			return s, true
+		}
+	}
+	return nil, false
+}
+
+// resolveStringExpr resolves a single expression to a string value, handling string
+// literals and references to named string constants (bare or package-qualified).
+
+func resolveStringExpr(expr ast.Expr) (string, bool) {
+	switch v := expr.(type) {
+	case *ast.BasicLit:
+		return stringLiteralValue(v)
+	case *ast.Ident:
+		if ambiguousStrings[v.Name] {
+			return "", false
+		}
+		if s, ok := stringSymbols[v.Name]; ok {
+			return s, true
+		}
+	case *ast.SelectorExpr:
+		if ambiguousStrings[v.Sel.Name] {
+			return "", false
+		}
+		if s, ok := stringSymbols[v.Sel.Name]; ok {
+			return s, true
+		}
+	case *ast.CallExpr:
+		// Unwrap string(X) conversions, used when a Label value references a
+		// string-based named type such as disruption.Decision or v1.ConsolidationPolicy.
+		if fn, ok := v.Fun.(*ast.Ident); ok && fn.Name == "string" && len(v.Args) == 1 {
+			return resolveStringExpr(v.Args[0])
+		}
+		// Unwrap known casing helpers applied to a resolvable value at the Label's
+		// declaration site, so the documented value matches the string emitted at
+		// runtime, e.g. strings.ToLower(string(v1.DisruptionReason...)) and
+		// pretty.ToSnakeCase(string(v1.ConsolidationPolicy...)).
+		if sel, ok := v.Fun.(*ast.SelectorExpr); ok && len(v.Args) == 1 {
+			if pkg, ok := sel.X.(*ast.Ident); ok {
+				if inner, ok := resolveStringExpr(v.Args[0]); ok {
+					switch pkg.Name + "." + sel.Sel.Name {
+					case "strings.ToLower":
+						return strings.ToLower(inner), true
+					case "strings.ToUpper":
+						return strings.ToUpper(inner), true
+					case "pretty.ToSnakeCase":
+						return pretty.ToSnakeCase(inner), true
+					}
+				}
+			}
+		}
+	case *ast.BinaryExpr:
+		// Resolve string concatenation ("a" + "b" + const), used to wrap long
+		// Label.Help text across multiple source lines.
+		if v.Op == token.ADD {
+			if l, ok := resolveStringExpr(v.X); ok {
+				if r, ok := resolveStringExpr(v.Y); ok {
+					return l + r, true
+				}
+			}
+		}
+	}
+	return "", false
 }
 
 func getFuncPackage(fun ast.Expr) string {
@@ -400,9 +1429,6 @@ func getFuncPackage(fun ast.Expr) string {
 	}
 	if iexpr, ok := fun.(*ast.IndexExpr); ok {
 		return getFuncPackage(iexpr.X)
-	}
-	if _, ok := fun.(*ast.FuncLit); ok {
-		return ""
 	}
 	return ""
 }
