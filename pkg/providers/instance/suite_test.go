@@ -386,8 +386,10 @@ var _ = Describe("InstanceProvider", func() {
 		Expect(corecloudprovider.IsInsufficientCapacityError(err)).To(BeTrue())
 		Expect(instance).To(BeNil())
 
-		// Ensure we marked the reservation as unavailable after encountering the error
-		Expect(awsEnv.CapacityReservationProvider.GetAvailableInstanceCount(targetReservationID)).To(Equal(0))
+		// A reserved launch ICE is a non-capacity unavailability: it marks the reserved offering in the shared
+		// UnavailableOfferings cache (driving Available=false), rather than zeroing the reservation manager's
+		// capacity count, which now tracks only capacity.
+		Expect(awsEnv.UnavailableOfferingsCache.IsUnavailable("m5.large", "test-zone-1a", nil, karpv1.CapacityTypeReserved)).To(BeTrue())
 	})
 	It("should not mark capacity reservations unavailable for RequestLimitExceeded CreateFleet errors", func() {
 		const targetReservationID = "cr-m5.large-1a-1"
