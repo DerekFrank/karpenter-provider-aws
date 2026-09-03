@@ -517,7 +517,9 @@ func (p *DefaultProvider) getOverrides(
 	}
 	var filteredOfferings []offeringWithParentName
 	for _, it := range instanceTypes {
-		ofs := it.Offerings.Available().Compatible(reqs)
+		// Launchable (not just Available): don't emit a full reservation (ReservationCapacity=0) as a CreateFleet
+		// override — it can't be launched into and would ICE.
+		ofs := instancefilter.LaunchableOfferings(it.Offerings.Compatible(reqs))
 		// If we are generating a launch template for a specific capacity reservation, we only want to include the offering
 		// for that capacity reservation when generating overrides.
 		if capacityReservationID != "" {
@@ -750,7 +752,10 @@ func getCapacityType(nodeClaim *karpv1.NodeClaim, instanceTypes []*cloudprovider
 		}
 		requirements[karpv1.CapacityTypeLabelKey] = scheduling.NewRequirement(karpv1.CapacityTypeLabelKey, corev1.NodeSelectorOpIn, capacityType)
 		for _, it := range instanceTypes {
-			if len(it.Offerings.Available().Compatible(requirements)) != 0 {
+			// Launchable (not just Available): a full reservation (ReservationCapacity=0) is Available but can't be
+			// launched into, so it must not make us choose the "reserved" capacity type — we'd target a full reservation
+			// and ICE instead of falling back to on-demand/spot.
+			if len(instancefilter.LaunchableOfferings(it.Offerings.Compatible(requirements))) != 0 {
 				return capacityType
 			}
 		}

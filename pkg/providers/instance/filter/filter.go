@@ -37,6 +37,20 @@ type Filter interface {
 	Name() string
 }
 
+// Launchable reports whether a new instance can actually be launched into this offering right now. It must be healthy
+// (Available) and, if it is a reserved offering (an ODCR or a capacity block), have remaining ReservationCapacity.
+// Availability alone is insufficient: capacity and health are independent axes, so a full-but-healthy reservation is
+// Available=true with ReservationCapacity=0. Any code that treats "Available" as "can launch now" must use this so it
+// doesn't select, price, or launch into a full reservation (which would ICE).
+func Launchable(o *cloudprovider.Offering) bool {
+	return o.Available && (o.CapacityType() != karpv1.CapacityTypeReserved || o.ReservationCapacity > 0)
+}
+
+// LaunchableOfferings returns the offerings that can actually be launched into right now (see Launchable).
+func LaunchableOfferings(ofs cloudprovider.Offerings) cloudprovider.Offerings {
+	return lo.Filter(ofs, func(o *cloudprovider.Offering, _ int) bool { return Launchable(o) })
+}
+
 // CompatibleAvailableFilter removes instance types which do not have any compatible, available offerings. Other filters
 // should not be used without first using this filter.
 func CompatibleAvailableFilter(requirements scheduling.Requirements, requests corev1.ResourceList) Filter {
@@ -167,7 +181,10 @@ func (f capacityReservationTypeFilter) Partition(instanceTypes []*cloudprovider.
 		}
 	}
 	for _, it := range instanceTypes {
-		for _, o := range it.Offerings.Available().Compatible(f.requirements) {
+		// Launchable (not just Available): a full reservation (ReservationCapacity=0) can't be launched into, so it must
+		// not contribute its (near-zero) price to a partition or make its instance type part of that partition —
+		// otherwise a full partition could be selected on price and the launch would ICE.
+		for _, o := range LaunchableOfferings(it.Offerings.Compatible(f.requirements)) {
 			if o.CapacityType() != karpv1.CapacityTypeReserved {
 				continue
 			}
@@ -228,7 +245,9 @@ func (f capacityBlockFilter) FilterReject(instanceTypes []*cloudprovider.Instanc
 			if o.CapacityType() != karpv1.CapacityTypeReserved {
 				continue
 			}
-			if !o.Available || !f.requirements.IsCompatible(o.Requirements, scheduling.AllowUndefinedWellKnownLabels) {
+			// Launchable (not just Available): a capacity block with no remaining ReservationCapacity is full and can't
+			// be launched into, so it must not be selected as the block to pin — otherwise the launch ICEs.
+			if !Launchable(o) || !f.requirements.IsCompatible(o.Requirements, scheduling.AllowUndefinedWellKnownLabels) {
 				continue
 			}
 			if o.Requirements.Get(v1.LabelCapacityReservationType).Any() != string(v1.CapacityReservationTypeCapacityBlock) {
