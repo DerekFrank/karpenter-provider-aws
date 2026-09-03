@@ -33,7 +33,7 @@ const (
 )
 
 // NodeClass describes the nodeclass dimension identifying the owning EC2NodeClass.
-var NodeClass = metrics.Label{
+var NodeClass = opmetrics.Label{
 	Name: nodeClassLabel,
 	Help: "The name of the EC2NodeClass the metric was recorded for.",
 }
@@ -53,8 +53,8 @@ var (
 			Name:      "userdata_bytes",
 			Help:      "Size in bytes of the rendered user data (raw, pre-base64) for the EC2NodeClass",
 		},
-		[]string{
-			nodeClassLabel,
+		[]opmetrics.Label{
+			NodeClass,
 		},
 	)
 )

@@ -30,9 +30,19 @@ const (
 )
 
 // ZoneID describes the zone_id dimension.
-var ZoneID = metrics.Label{
+var ZoneID = opmetrics.Label{
 	Name: zoneIDLabel,
-	Help: "The availability zone ID of the instance, e.g. `usw2-az1` (stable across accounts, unlike the zone name).",
+	Help: "The availability zone ID of the instance, e.g. `usw2-az1` (stable across accounts, unlike the zone name). See https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html#availability-zones-describe.",
+}
+
+// LaunchFailureReason describes the reason dimension of the launch-failure
+// counter: the categorized CreateFleet error returned by EC2 (via
+// awserrors.ToReasonMessage), e.g. `Unauthorized`, `InsufficientFreeAddressesInSubnet`,
+// `LaunchFailed`. The value set is derived at runtime from EC2 error codes, so it
+// is left unenumerated.
+var LaunchFailureReason = opmetrics.Label{
+	Name: metrics.ReasonLabel,
+	Help: "The categorized reason a CreateFleet offering launch failed, derived from the EC2 error code (see https://docs.aws.amazon.com/AWSEC2/latest/APIReference/errors-overview.html#CommonErrors).",
 }
 
 var (
@@ -46,11 +56,11 @@ var (
 			Name:      "instance_launch_failures_total",
 			Help:      "Number of instance launch (CreateFleet offering) failures, dimensioned by availability zone, zone ID, capacity type, and launch failure reason.",
 		},
-		[]string{
-			zoneLabel,
-			zoneIDLabel,
-			metrics.CapacityTypeLabel,
-			metrics.ReasonLabel,
+		[]opmetrics.Label{
+			metrics.Zone,
+			ZoneID,
+			metrics.CapacityType,
+			LaunchFailureReason,
 		},
 	)
 	InstanceTerminationFailuresTotal = opmetrics.NewPrometheusCounter(
@@ -61,9 +71,9 @@ var (
 			Name:      "instance_termination_failures_total",
 			Help:      "Number of instance termination (TerminateInstances) failures, dimensioned by availability zone and zone ID.",
 		},
-		[]string{
-			zoneLabel,
-			zoneIDLabel,
+		[]opmetrics.Label{
+			metrics.Zone,
+			ZoneID,
 		},
 	)
 )

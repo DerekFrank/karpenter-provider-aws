@@ -38,24 +38,24 @@ Number of balanced consolidation moves. Labeled by decision, NodePool, and polic
 A metric with a constant '1' value labeled by version from which karpenter was built.
 - Stability Level: STABLE
 - Dimensions:
-  - `version`
-  - `goversion`
-  - `goarch`
-  - `commit`
+  - `version` — The Karpenter version the binary was built from.
+  - `goversion` — The Go version the binary was compiled with.
+  - `goarch` — The target architecture the binary was compiled for.
+  - `commit` — The git commit the binary was built from.
 
 ## Nodeclaims Metrics
 
 ### `karpenter_nodeclaims_unhealthy_disrupted_total`
-Number of unhealthy nodeclaims disrupted in total by Karpenter. Labeled by condition on the node was disrupted, the owning nodepool, and the image ID.
+Number of unhealthy nodeclaims disrupted in total by Karpenter. Labeled by the condition the node was disrupted on, the owning nodepool, the capacity type, and the image ID.
 - Stability Level: ALPHA
 - Dimensions:
-  - `condition`
+  - `condition` — The node status condition type that failed the repair health check and triggered disruption.
   - `nodepool` — The name of the NodePool that owns the resource.
   - `capacity_type` — The capacity type of the instance.
     - `on-demand` — On-demand capacity.
     - `spot` — Spot capacity, which can be reclaimed by the cloud provider.
     - `reserved` — Reserved capacity, backed by a capacity reservation.
-  - `image_id`
+  - `image_id` — The image ID of the node that was disrupted.
 
 ### `karpenter_nodeclaims_termination_duration_seconds`
 Duration of NodeClaim termination in seconds.
@@ -84,26 +84,49 @@ Duration of CloudProvider Instance termination in seconds.
 Number of nodeclaims disrupted in total by Karpenter. Labeled by reason the nodeclaim was disrupted, the owning nodepool, the capacity type, the consolidation policy, and the termination mode.
 - Stability Level: ALPHA
 - Dimensions:
-  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+  - `reason` — Why the NodeClaim was disrupted.
+    - `unhealthy` — The node failed a node-repair health check.
+    - `expired` — The Node exceeded its expiration.
+    - `garbage_collected` — The NodeClaim's backing instance was gone and it was garbage collected.
+    - `insufficient_capacity` — The cloud provider had insufficient capacity to launch the NodeClaim.
+    - `nodeclass_not_ready` — The NodeClaim's NodeClass was not ready.
+    - `registration_timeout` — The NodeClaim's node did not register within the liveness timeout.
+    - `launch_timeout` — The NodeClaim's backing instance did not launch within the liveness timeout.
+    - `underutilized` — The node was underutilized.
+    - `empty` — The node had no workload pods.
+    - `drifted` — The node drifted from its desired specification.
+    - `spot_interrupted` — EC2 issued a two-minute Spot interruption notice for the instance.
+    - `rebalance_recommendation` — EC2 issued a Spot rebalance recommendation for the instance.
+    - `scheduled_change` — AWS Health scheduled a change (e.g. maintenance or retirement) affecting the instance.
+    - `instance_stopped` — The EC2 instance was stopped.
+    - `instance_terminated` — The EC2 instance was terminated.
+    - `capacity_reservation_interrupted` — The instance's capacity reservation was interrupted.
+    - `instance_status` — An EC2 instance status check reported the instance unhealthy.
+    - `system_status` — An EC2 system status check reported the instance's host unhealthy.
+    - `event_status` — An EC2 scheduled-event status check fired for the instance.
   - `nodepool` — The name of the NodePool that owns the resource.
   - `capacity_type` — The capacity type of the instance.
     - `on-demand` — On-demand capacity.
     - `spot` — Spot capacity, which can be reclaimed by the cloud provider.
     - `reserved` — Reserved capacity, backed by a capacity reservation.
   - `consolidation_policy` — The NodePool consolidation policy in effect.
-    - `WhenEmpty` — Consolidate only nodes with no workload pods.
-    - `WhenEmptyOrUnderutilized` — Consolidate empty nodes and underutilized nodes.
-    - `Balanced` — Consolidate using the balanced algorithm.
+    - `when_empty` — Consolidate only empty nodes (nodes running only pods with no disruption cost, e.g. DaemonSets).
+    - `balanced` — Consolidate nodes where the cost savings outweigh the disruption to running pods.
+    - `when_empty_or_underutilized` — Consolidate any node that can be removed or replaced to reduce cost.
   - `termination_mode` — The termination mode used to disrupt the node.
-    - `graceful` — Graceful termination that respects the node's disruption budget and drains pods.
-    - `eventual` — Eventual termination once the node's terminationGracePeriod elapses.
-    - `forceful` — Forceful termination that deletes the node immediately.
+    - `graceful` — The NodeClaim has no terminationGracePeriod, so termination respects blocking pod PDBs and the do-not-disrupt annotation.
+    - `eventual` — The NodeClaim has a positive terminationGracePeriod, so termination is bounded by it and overrides blocking pod PDBs and the do-not-disrupt annotation.
+    - `forceful` — The NodeClaim has a zero (non-positive) terminationGracePeriod, so it is terminated immediately.
 
 ### `karpenter_nodeclaims_created_total`
 Number of nodeclaims created in total by Karpenter. Labeled by reason the nodeclaim was created, the owning nodepool, and if min values was relaxed for this nodeclaim.
 - Stability Level: STABLE
 - Dimensions:
-  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+  - `reason` — Why the NodeClaim was created.
+    - `provisioned` — Capacity was provisioned for pending pods.
+    - `underutilized` — The node was underutilized.
+    - `empty` — The node had no workload pods.
+    - `drifted` — The node drifted from its desired specification.
   - `nodepool` — The name of the NodePool that owns the resource.
   - `min_values_relaxed` — Whether minValues requirements were relaxed to satisfy scheduling.
 
@@ -128,6 +151,9 @@ The count of transitions of a given object, type and status.
 - Dimensions:
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
   - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
 
 ### `operator_nodeclaim_status_condition_transition_seconds`
@@ -136,7 +162,13 @@ The amount of time a condition was in a given state before transitioning. e.g. A
 - Dimensions:
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
   - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
   - `to_status` — The status a condition transitioned to, for transition metrics.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
 
 ### `operator_nodeclaim_status_condition_current_status_seconds`
 The current amount of time in seconds that a status condition has been in a specific state. Alarm := P99(Updated=Unknown) > 5 minutes
@@ -146,6 +178,9 @@ The current amount of time in seconds that a status condition has been in a spec
   - `name` — The name of the object the metric describes.
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
   - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
 
 ### `operator_nodeclaim_status_condition_count`
@@ -156,6 +191,9 @@ The number of a condition for a given object, type and status. e.g. Alarm := Ava
   - `name` — The name of the object the metric describes.
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
   - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
 
 ## Nodes Metrics
@@ -163,18 +201,38 @@ The number of a condition for a given object, type and status. e.g. Alarm := Ava
 ### `karpenter_nodes_total_pod_requests`
 Node total pod requests are the resources requested by pods bound to nodes, including the DaemonSet pods.
 - Stability Level: BETA
+- Dimensions:
+  - `node_name` — The name of the node.
+  - `phase` — The node's lifecycle phase, e.g. `Pending`, `Running`.
+  - `managed`
+  - `resource_type` — The Kubernetes resource type, e.g. `cpu`, `memory`, `pods`.
 
 ### `karpenter_nodes_total_pod_limits`
 Node total pod limits are the resources specified by pod limits, including the DaemonSet pods.
 - Stability Level: BETA
+- Dimensions:
+  - `node_name` — The name of the node.
+  - `phase` — The node's lifecycle phase, e.g. `Pending`, `Running`.
+  - `managed`
+  - `resource_type` — The Kubernetes resource type, e.g. `cpu`, `memory`, `pods`.
 
 ### `karpenter_nodes_total_daemon_requests`
 Node total daemon requests are the resource requested by DaemonSet pods bound to nodes.
 - Stability Level: BETA
+- Dimensions:
+  - `node_name` — The name of the node.
+  - `phase` — The node's lifecycle phase, e.g. `Pending`, `Running`.
+  - `managed`
+  - `resource_type` — The Kubernetes resource type, e.g. `cpu`, `memory`, `pods`.
 
 ### `karpenter_nodes_total_daemon_limits`
 Node total daemon limits are the resources specified by DaemonSet pod limits.
 - Stability Level: BETA
+- Dimensions:
+  - `node_name` — The name of the node.
+  - `phase` — The node's lifecycle phase, e.g. `Pending`, `Running`.
+  - `managed`
+  - `resource_type` — The Kubernetes resource type, e.g. `cpu`, `memory`, `pods`.
 
 ### `karpenter_nodes_termination_duration_seconds`
 The time taken between a node's deletion request and the removal of its finalizer
@@ -192,6 +250,11 @@ Number of nodes terminated in total by Karpenter. Labeled by owning nodepool and
 ### `karpenter_nodes_system_overhead`
 Node system daemon overhead are the resources reserved for system overhead, the difference between the node's capacity and allocatable values are reported by the status.
 - Stability Level: BETA
+- Dimensions:
+  - `node_name` — The name of the node.
+  - `phase` — The node's lifecycle phase, e.g. `Pending`, `Running`.
+  - `managed`
+  - `resource_type` — The Kubernetes resource type, e.g. `cpu`, `memory`, `pods`.
 
 ### `karpenter_nodes_lifetime_duration_seconds`
 The lifetime duration of the nodes since creation.
@@ -208,6 +271,10 @@ The total number of nodes drained by Karpenter
 ### `karpenter_nodes_current_lifetime_seconds`
 Node age in seconds
 - Stability Level: ALPHA
+- Dimensions:
+  - `node_name` — The name of the node.
+  - `phase` — The node's lifecycle phase, e.g. `Pending`, `Running`.
+  - `managed`
 
 ### `karpenter_nodes_created_total`
 Number of nodes created in total by Karpenter. Labeled by owning nodepool and zone.
@@ -219,6 +286,11 @@ Number of nodes created in total by Karpenter. Labeled by owning nodepool and zo
 ### `karpenter_nodes_allocatable`
 Node allocatable are the resources allocatable by nodes.
 - Stability Level: BETA
+- Dimensions:
+  - `node_name` — The name of the node.
+  - `phase` — The node's lifecycle phase, e.g. `Pending`, `Running`.
+  - `managed`
+  - `resource_type` — The Kubernetes resource type, e.g. `cpu`, `memory`, `pods`.
 
 ## Pods Metrics
 
@@ -226,19 +298,42 @@ Node allocatable are the resources allocatable by nodes.
 The time from pod creation until the pod is running.
 - Stability Level: ALPHA
 - Dimensions:
-  - `name`
-  - `namespace`
+  - `name` — The name of the pod.
+  - `namespace` — The namespace of the pod.
 
 ### `karpenter_pods_unbound_time_seconds`
 The time from pod creation until the pod is bound.
 - Stability Level: ALPHA
 - Dimensions:
-  - `name`
-  - `namespace`
+  - `name` — The name of the pod.
+  - `namespace` — The namespace of the pod.
+  - `dynamic_resources` — Whether the pod has DRA (dynamic resource allocation) requirements.
 
 ### `karpenter_pods_state`
-Pod state is the current state of pods. This metric can be used several ways as it is labeled by the pod name, namespace, owner, node, nodepool name, zone, architecture, capacity type, instance type, pod phase, and pod readiness.
+Pod state is the current state of pods. This metric can be used several ways as it is labeled by the pod name, namespace, owner, node, whether the pod is scheduled, nodepool name, zone, architecture, capacity type, instance type, pod phase, pod readiness, and whether the node is Karpenter-managed.
 - Stability Level: BETA
+- Dimensions:
+  - `name` — The name of the pod.
+  - `namespace` — The namespace of the pod.
+  - `owner` — The owning workload of the pod, formatted as `<kind>/<name>`.
+  - `node` — The name of the node the pod is bound to.
+  - `scheduled` — Whether the pod has been scheduled to a node.
+  - `nodepool` — The name of the NodePool that owns the resource.
+  - `zone` — The availability zone of the instance.
+  - `arch` — The CPU architecture of the node the pod is bound to.
+  - `capacity_type` — The capacity type of the instance.
+    - `on-demand` — On-demand capacity.
+    - `spot` — Spot capacity, which can be reclaimed by the cloud provider.
+    - `reserved` — Reserved capacity, backed by a capacity reservation.
+  - `instance_type` — The instance type of the node the pod is bound to.
+  - `phase` — The pod's lifecycle phase.
+    - `Pending` — The pod has been accepted but not all containers are running.
+    - `Running` — The pod is bound to a node and all containers are running.
+    - `Succeeded` — All containers terminated successfully.
+    - `Failed` — All containers terminated and at least one failed.
+    - `Unknown` — The pod's state could not be obtained.
+  - `ready` — Whether the pod is ready.
+  - `managed`
 
 ### `karpenter_pods_startup_duration_seconds`
 The time from pod creation until the pod is running.
@@ -252,15 +347,16 @@ The time it takes for Karpenter to first try to schedule a pod after it's been s
 The time from when Karpenter first thinks the pod can schedule until the pod is running. Note: this calculated from a point in memory, not by the pod creation timestamp.
 - Stability Level: ALPHA
 - Dimensions:
-  - `name`
-  - `namespace`
+  - `name` — The name of the pod.
+  - `namespace` — The namespace of the pod.
 
 ### `karpenter_pods_provisioning_unbound_time_seconds`
 The time from when Karpenter first thinks the pod can schedule until it binds. Note: this calculated from a point in memory, not by the pod creation timestamp.
 - Stability Level: ALPHA
 - Dimensions:
-  - `name`
-  - `namespace`
+  - `name` — The name of the pod.
+  - `namespace` — The namespace of the pod.
+  - `dynamic_resources` — Whether the pod has DRA (dynamic resource allocation) requirements.
 
 ### `karpenter_pods_provisioning_startup_duration_seconds`
 The time from when Karpenter first thinks the pod can schedule until the pod is running. Note: this calculated from a point in memory, not by the pod creation timestamp.
@@ -270,47 +366,61 @@ The time from when Karpenter first thinks the pod can schedule until the pod is 
 The time from when Karpenter has seen a pod without making a scheduling decision for the pod. Note: this calculated from a point in memory, not by the pod creation timestamp.
 - Stability Level: ALPHA
 - Dimensions:
-  - `name`
-  - `namespace`
+  - `name` — The name of the pod.
+  - `namespace` — The namespace of the pod.
 
 ### `karpenter_pods_provisioning_bound_duration_seconds`
 The time from when Karpenter first thinks the pod can schedule until it binds. Note: this calculated from a point in memory, not by the pod creation timestamp.
 - Stability Level: ALPHA
+- Dimensions:
+  - `dynamic_resources` — Whether the pod has DRA (dynamic resource allocation) requirements.
 
 ### `karpenter_pods_eviction_requests_total`
 The total number of pod eviction requests made by Karpenter, labeled by response code
 - Stability Level: ALPHA
 - Dimensions:
-  - `code` — The HTTP response code returned by the Kubernetes eviction API for the eviction request.
+  - `code` — The HTTP response code returned by the Kubernetes eviction API (https://kubernetes.io/docs/concepts/scheduling-eviction/api-eviction/) for the eviction request.
 
 ### `karpenter_pods_drained_total`
 The total number of pods drained during node termination by Karpenter, labeled by reason
 - Stability Level: ALPHA
 - Dimensions:
-  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+  - `reason` — Why the pod was drained: the owning NodeClaim's disruption reason, or forceful termination.
 
 ### `karpenter_pods_disruption_initiated_total`
 Number of pod disruptions initiated in total by Karpenter, incremented by the reschedulable pod count whenever the underlying nodeclaim is disrupted. Labeled by reason the nodeclaim was disrupted, the owning nodepool, the capacity type, the consolidation policy, and the termination mode. Pods owned by DaemonSets and mirror pods are excluded.
 - Stability Level: ALPHA
 - Dimensions:
-  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+  - `reason` — Why the NodeClaim was disrupted.
+    - `unhealthy` — The node failed a node-repair health check.
+    - `expired` — The Node exceeded its expiration.
+    - `garbage_collected` — The NodeClaim's backing instance was gone and it was garbage collected.
+    - `insufficient_capacity` — The cloud provider had insufficient capacity to launch the NodeClaim.
+    - `nodeclass_not_ready` — The NodeClaim's NodeClass was not ready.
+    - `registration_timeout` — The NodeClaim's node did not register within the liveness timeout.
+    - `launch_timeout` — The NodeClaim's backing instance did not launch within the liveness timeout.
+    - `underutilized` — The node was underutilized.
+    - `empty` — The node had no workload pods.
+    - `drifted` — The node drifted from its desired specification.
   - `nodepool` — The name of the NodePool that owns the resource.
   - `capacity_type` — The capacity type of the instance.
     - `on-demand` — On-demand capacity.
     - `spot` — Spot capacity, which can be reclaimed by the cloud provider.
     - `reserved` — Reserved capacity, backed by a capacity reservation.
   - `consolidation_policy` — The NodePool consolidation policy in effect.
-    - `WhenEmpty` — Consolidate only nodes with no workload pods.
-    - `WhenEmptyOrUnderutilized` — Consolidate empty nodes and underutilized nodes.
-    - `Balanced` — Consolidate using the balanced algorithm.
+    - `when_empty` — Consolidate only empty nodes (nodes running only pods with no disruption cost, e.g. DaemonSets).
+    - `balanced` — Consolidate nodes where the cost savings outweigh the disruption to running pods.
+    - `when_empty_or_underutilized` — Consolidate any node that can be removed or replaced to reduce cost.
   - `termination_mode` — The termination mode used to disrupt the node.
-    - `graceful` — Graceful termination that respects the node's disruption budget and drains pods.
-    - `eventual` — Eventual termination once the node's terminationGracePeriod elapses.
-    - `forceful` — Forceful termination that deletes the node immediately.
+    - `graceful` — The NodeClaim has no terminationGracePeriod, so termination respects blocking pod PDBs and the do-not-disrupt annotation.
+    - `eventual` — The NodeClaim has a positive terminationGracePeriod, so termination is bounded by it and overrides blocking pod PDBs and the do-not-disrupt annotation.
+    - `forceful` — The NodeClaim has a zero (non-positive) terminationGracePeriod, so it is terminated immediately.
 
 ### `karpenter_pods_bound_duration_seconds`
 The time from pod creation until the pod is bound.
 - Stability Level: ALPHA
+- Dimensions:
+  - `dynamic_resources` — Whether the pod has DRA (dynamic resource allocation) requirements.
 
 ## Nodepool Termination Metrics
 
@@ -333,6 +443,9 @@ The count of transitions of a given object, type and status.
 - Dimensions:
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
   - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
 
 ### `operator_nodepool_status_condition_transition_seconds`
@@ -341,7 +454,13 @@ The amount of time a condition was in a given state before transitioning. e.g. A
 - Dimensions:
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
   - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
   - `to_status` — The status a condition transitioned to, for transition metrics.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
 
 ### `operator_nodepool_status_condition_current_status_seconds`
 The current amount of time in seconds that a status condition has been in a specific state. Alarm := P99(Updated=Unknown) > 5 minutes
@@ -351,6 +470,9 @@ The current amount of time in seconds that a status condition has been in a spec
   - `name` — The name of the object the metric describes.
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
   - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
 
 ### `operator_nodepool_status_condition_count`
@@ -361,6 +483,9 @@ The number of a condition for a given object, type and status. e.g. Alarm := Ava
   - `name` — The name of the object the metric describes.
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
   - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
 
 ## Ec2nodeclass Termination Metrics
@@ -384,6 +509,9 @@ The count of transitions of a given object, type and status.
 - Dimensions:
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
   - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
 
 ### `operator_ec2nodeclass_status_condition_transition_seconds`
@@ -392,7 +520,13 @@ The amount of time a condition was in a given state before transitioning. e.g. A
 - Dimensions:
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
   - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
   - `to_status` — The status a condition transitioned to, for transition metrics.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
 
 ### `operator_ec2nodeclass_status_condition_current_status_seconds`
 The current amount of time in seconds that a status condition has been in a specific state. Alarm := P99(Updated=Unknown) > 5 minutes
@@ -402,6 +536,9 @@ The current amount of time in seconds that a status condition has been in a spec
   - `name` — The name of the object the metric describes.
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
   - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
 
 ### `operator_ec2nodeclass_status_condition_count`
@@ -412,6 +549,9 @@ The number of a condition for a given object, type and status. e.g. Alarm := Ava
   - `name` — The name of the object the metric describes.
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
   - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
 
 ## Voluntary Disruption Metrics
@@ -426,10 +566,14 @@ The number of times that an enqueued disruption decision failed. Labeled by disr
     - `delete` — The candidate(s) were deleted without replacement.
     - `approved` — The disruption decision was approved for execution.
     - `rejected` — The disruption decision was rejected before execution.
-  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+  - `reason` — The voluntary-disruption reason.
+    - `underutilized` — The node was underutilized.
+    - `empty` — The node had no workload pods.
+    - `drifted` — The node drifted from its desired specification.
   - `consolidation_type` — The consolidation algorithm that produced the decision.
     - `multi` — Consolidation that considers removing multiple nodes at once.
     - `single` — Consolidation that considers removing a single node.
+    - `empty` — Consolidation that removes empty nodes.
 
 ### `karpenter_voluntary_disruption_failed_validations_total`
 Number of candidates that were selected for disruption but failed validation. Labeled by consolidation type.
@@ -438,12 +582,16 @@ Number of candidates that were selected for disruption but failed validation. La
   - `consolidation_type` — The consolidation algorithm that produced the decision.
     - `multi` — Consolidation that considers removing multiple nodes at once.
     - `single` — Consolidation that considers removing a single node.
+    - `empty` — Consolidation that removes empty nodes.
 
 ### `karpenter_voluntary_disruption_eligible_nodes`
 Number of nodes eligible for disruption by Karpenter. Labeled by disruption reason.
 - Stability Level: BETA
 - Dimensions:
-  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+  - `reason` — The voluntary-disruption reason.
+    - `underutilized` — The node was underutilized.
+    - `empty` — The node had no workload pods.
+    - `drifted` — The node drifted from its desired specification.
 
 ### `karpenter_voluntary_disruption_decisions_total`
 Number of disruption decisions performed. Labeled by disruption decision, reason, and consolidation type.
@@ -455,10 +603,14 @@ Number of disruption decisions performed. Labeled by disruption decision, reason
     - `delete` — The candidate(s) were deleted without replacement.
     - `approved` — The disruption decision was approved for execution.
     - `rejected` — The disruption decision was rejected before execution.
-  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+  - `reason` — The voluntary-disruption reason.
+    - `underutilized` — The node was underutilized.
+    - `empty` — The node had no workload pods.
+    - `drifted` — The node drifted from its desired specification.
   - `consolidation_type` — The consolidation algorithm that produced the decision.
     - `multi` — Consolidation that considers removing multiple nodes at once.
     - `single` — Consolidation that considers removing a single node.
+    - `empty` — Consolidation that removes empty nodes.
 
 ### `karpenter_voluntary_disruption_decisions_by_nodepool_total`
 Number of disruption decisions performed by nodepool. Labeled by nodepool name, disruption decision, reason, and consolidation type.
@@ -471,19 +623,27 @@ Number of disruption decisions performed by nodepool. Labeled by nodepool name, 
     - `delete` — The candidate(s) were deleted without replacement.
     - `approved` — The disruption decision was approved for execution.
     - `rejected` — The disruption decision was rejected before execution.
-  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+  - `reason` — The voluntary-disruption reason.
+    - `underutilized` — The node was underutilized.
+    - `empty` — The node had no workload pods.
+    - `drifted` — The node drifted from its desired specification.
   - `consolidation_type` — The consolidation algorithm that produced the decision.
     - `multi` — Consolidation that considers removing multiple nodes at once.
     - `single` — Consolidation that considers removing a single node.
+    - `empty` — Consolidation that removes empty nodes.
 
 ### `karpenter_voluntary_disruption_decision_evaluation_duration_seconds`
 Duration of the disruption decision evaluation process in seconds. Labeled by method and consolidation type.
 - Stability Level: BETA
 - Dimensions:
-  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+  - `reason` — The voluntary-disruption reason.
+    - `underutilized` — The node was underutilized.
+    - `empty` — The node had no workload pods.
+    - `drifted` — The node drifted from its desired specification.
   - `consolidation_type` — The consolidation algorithm that produced the decision.
     - `multi` — Consolidation that considers removing multiple nodes at once.
     - `single` — Consolidation that considers removing a single node.
+    - `empty` — Consolidation that removes empty nodes.
 
 ### `karpenter_voluntary_disruption_consolidation_timeouts_total`
 Number of times the Consolidation algorithm has reached a timeout. Labeled by consolidation type.
@@ -492,6 +652,7 @@ Number of times the Consolidation algorithm has reached a timeout. Labeled by co
   - `consolidation_type` — The consolidation algorithm that produced the decision.
     - `multi` — Consolidation that considers removing multiple nodes at once.
     - `single` — Consolidation that considers removing a single node.
+    - `empty` — Consolidation that removes empty nodes.
 
 ## Scheduler Metrics
 
@@ -546,7 +707,10 @@ The number of nodes consuming the budget of a nodepool at a point in time. Label
 - Stability Level: ALPHA
 - Dimensions:
   - `nodepool` — The name of the NodePool that owns the resource.
-  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+  - `reason` — The voluntary-disruption reason.
+    - `underutilized` — The node was underutilized.
+    - `empty` — The node had no workload pods.
+    - `drifted` — The node drifted from its desired specification.
 
 ### `karpenter_nodepools_limit`
 Limits specified on the nodepool that restrict the quantity of resources provisioned. Labeled by nodepool name and resource type.
@@ -556,7 +720,7 @@ Limits specified on the nodepool that restrict the quantity of resources provisi
   - `nodepool` — The name of the NodePool that owns the resource.
 
 ### `karpenter_nodepools_cost_tracker_errors_total`
-Number of errors encountered during cost tracking operations. Labeled by nodepool and nodeclaim.
+Number of errors encountered during cost tracking operations. Labeled by nodepool.
 - Stability Level: ALPHA
 - Dimensions:
   - `nodepool` — The name of the NodePool that owns the resource.
@@ -572,7 +736,10 @@ The number of nodes for a given NodePool that can be concurrently disrupting at 
 - Stability Level: ALPHA
 - Dimensions:
   - `nodepool` — The name of the NodePool that owns the resource.
-  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+  - `reason` — The voluntary-disruption reason.
+    - `underutilized` — The node was underutilized.
+    - `empty` — The node had no workload pods.
+    - `drifted` — The node drifted from its desired specification.
 
 ## Interruption Metrics
 
@@ -580,7 +747,7 @@ The number of nodes for a given NodePool that can be concurrently disrupting at 
 Count of messages received from the SQS queue. Broken down by message type and whether the message was actionable.
 - Stability Level: STABLE
 - Dimensions:
-  - `message_type` — The type of interruption message received from the SQS queue, e.g. `spot_interruption`, `scheduled_change`, `state_change`, `rebalance_recommendation`.
+  - `message_type` — The type of interruption message received from the SQS queue, e.g. `spot_interruption`, `scheduled_change`, `state_change`, `rebalance_recommendation`. See https://karpenter.sh/docs/concepts/disruption/#interruption.
 
 ### `karpenter_interruption_message_queue_duration_seconds`
 Amount of time an interruption message is on the queue before it is processed by karpenter.
@@ -590,7 +757,7 @@ Amount of time an interruption message is on the queue before it is processed by
 Count of unique unhealthy instance statuses detected from EC2 DescribeInstanceStatus. Broken down by status check category.
 - Stability Level: STABLE
 - Dimensions:
-  - `category` — The EC2 instance status check category that was detected as unhealthy.
+  - `category` — The EC2 instance status check category that was detected as unhealthy. See https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/monitoring-system-instance-status-check.html.
 
 ### `karpenter_interruption_deleted_messages_total`
 Count of messages deleted from the SQS queue.
@@ -632,7 +799,7 @@ Current count of nodes in cluster state
 Instance type offering estimated hourly price used when making informed decisions on node cost calculation, based on instance type, capacity type, and zone.
 - Stability Level: BETA
 - Dimensions:
-  - `instance_type` — The EC2 instance type, e.g. `m5.large`.
+  - `instance_type` — The EC2 instance type, e.g. `m5.large`. See https://docs.aws.amazon.com/ec2/latest/instancetypes/.
   - `capacity_type` — The capacity type of the instance.
     - `on-demand` — On-demand capacity.
     - `spot` — Spot capacity, which can be reclaimed by the cloud provider.
@@ -643,7 +810,7 @@ Instance type offering estimated hourly price used when making informed decision
 Instance type offering availability, based on instance type, capacity type, and zone
 - Stability Level: BETA
 - Dimensions:
-  - `instance_type` — The EC2 instance type, e.g. `m5.large`.
+  - `instance_type` — The EC2 instance type, e.g. `m5.large`. See https://docs.aws.amazon.com/ec2/latest/instancetypes/.
   - `capacity_type` — The capacity type of the instance.
     - `on-demand` — On-demand capacity.
     - `spot` — Spot capacity, which can be reclaimed by the cloud provider.
@@ -654,32 +821,32 @@ Instance type offering availability, based on instance type, capacity type, and 
 Memory, in bytes, for a given instance type.
 - Stability Level: BETA
 - Dimensions:
-  - `instance_type` — The EC2 instance type, e.g. `m5.large`.
+  - `instance_type` — The EC2 instance type, e.g. `m5.large`. See https://docs.aws.amazon.com/ec2/latest/instancetypes/.
 
 ### `karpenter_cloudprovider_instance_type_cpu_cores`
 VCPUs cores for a given instance type.
 - Stability Level: BETA
 - Dimensions:
-  - `instance_type` — The EC2 instance type, e.g. `m5.large`.
+  - `instance_type` — The EC2 instance type, e.g. `m5.large`. See https://docs.aws.amazon.com/ec2/latest/instancetypes/.
 
 ### `karpenter_cloudprovider_instance_termination_failures_total`
 Number of instance termination (TerminateInstances) failures, dimensioned by availability zone and zone ID.
 - Stability Level: BETA
 - Dimensions:
   - `zone` — The availability zone of the instance.
-  - `zone_id` — The availability zone ID of the instance, e.g. `usw2-az1` (stable across accounts, unlike the zone name).
+  - `zone_id` — The availability zone ID of the instance, e.g. `usw2-az1` (stable across accounts, unlike the zone name). See https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html#availability-zones-describe.
 
 ### `karpenter_cloudprovider_instance_launch_failures_total`
 Number of instance launch (CreateFleet offering) failures, dimensioned by availability zone, zone ID, capacity type, and launch failure reason.
 - Stability Level: BETA
 - Dimensions:
   - `zone` — The availability zone of the instance.
-  - `zone_id` — The availability zone ID of the instance, e.g. `usw2-az1` (stable across accounts, unlike the zone name).
+  - `zone_id` — The availability zone ID of the instance, e.g. `usw2-az1` (stable across accounts, unlike the zone name). See https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html#availability-zones-describe.
   - `capacity_type` — The capacity type of the instance.
     - `on-demand` — On-demand capacity.
     - `spot` — Spot capacity, which can be reclaimed by the cloud provider.
     - `reserved` — Reserved capacity, backed by a capacity reservation.
-  - `reason` — Why the action was taken. Values are metric-specific: create/delete counters use `provisioned`, `expired`, or `unhealthy`; disruption metrics use the disruption reason such as `underutilized`, `empty`, `drifted`, or `expired`; cloud-provider failure metrics use the provider error reason.
+  - `reason` — The categorized reason a CreateFleet offering launch failed, derived from the EC2 error code (see https://docs.aws.amazon.com/AWSEC2/latest/APIReference/errors-overview.html#CommonErrors).
 
 ### `karpenter_cloudprovider_errors_total`
 Total number of errors returned from CloudProvider calls.
@@ -780,50 +947,50 @@ Number of currently used workers per controller
 How long in seconds processing an item from workqueue takes.
 - Stability Level: STABLE
 - Dimensions:
-  - `name`
+  - `name` — The name of the workqueue, typically the owning controller's name.
   - `controller` — The name of the controller that emitted the metric.
 
 ### `workqueue_unfinished_work_seconds`
 How many seconds of work has been done that is in progress and hasn't been observed by work_duration. Large values indicate stuck threads. One can deduce the number of stuck threads by observing the rate at which this increases.
 - Stability Level: STABLE
 - Dimensions:
-  - `name`
+  - `name` — The name of the workqueue, typically the owning controller's name.
   - `controller` — The name of the controller that emitted the metric.
 
 ### `workqueue_retries_total`
-Total number of retries handled by workqueue
+Total number of items added to the workqueue with a non-zero delay (rate-limited requeues, explicit RequeueAfter or AddAfter calls)
 - Stability Level: STABLE
 - Dimensions:
-  - `name`
+  - `name` — The name of the workqueue, typically the owning controller's name.
   - `controller` — The name of the controller that emitted the metric.
 
 ### `workqueue_queue_duration_seconds`
 How long in seconds an item stays in workqueue before being requested
 - Stability Level: STABLE
 - Dimensions:
-  - `name`
+  - `name` — The name of the workqueue, typically the owning controller's name.
   - `controller` — The name of the controller that emitted the metric.
 
 ### `workqueue_longest_running_processor_seconds`
 How many seconds has the longest running processor for workqueue been running.
 - Stability Level: STABLE
 - Dimensions:
-  - `name`
+  - `name` — The name of the workqueue, typically the owning controller's name.
   - `controller` — The name of the controller that emitted the metric.
 
 ### `workqueue_depth`
 Current depth of workqueue by workqueue and priority
 - Stability Level: STABLE
 - Dimensions:
-  - `name`
+  - `name` — The name of the workqueue, typically the owning controller's name.
   - `controller` — The name of the controller that emitted the metric.
-  - `priority`
+  - `priority` — The priority band of the enqueued item.
 
 ### `workqueue_adds_total`
 Total number of adds handled by workqueue
 - Stability Level: STABLE
 - Dimensions:
-  - `name`
+  - `name` — The name of the workqueue, typically the owning controller's name.
   - `controller` — The name of the controller that emitted the metric.
 
 ## Termination Metrics
@@ -858,6 +1025,9 @@ The count of transitions of a given object, type and status.
 - Dimensions:
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
   - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
   - `group` — The API group of the object the metric describes, e.g. `karpenter.sh`.
   - `kind` — The Kind of the object the metric describes, e.g. `NodeClaim`.
@@ -871,7 +1041,13 @@ The amount of time a condition was in a given state before transitioning. e.g. A
 - Dimensions:
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
   - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
   - `to_status` — The status a condition transitioned to, for transition metrics.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
   - `group` — The API group of the object the metric describes, e.g. `karpenter.sh`.
   - `kind` — The Kind of the object the metric describes, e.g. `NodeClaim`.
     - `EC2NodeClass`
@@ -886,6 +1062,9 @@ The current amount of time in seconds that a status condition has been in a spec
   - `name` — The name of the object the metric describes.
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
   - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
   - `group` — The API group of the object the metric describes, e.g. `karpenter.sh`.
   - `kind` — The Kind of the object the metric describes, e.g. `NodeClaim`.
@@ -901,6 +1080,9 @@ The number of a condition for a given object, type and status. e.g. Alarm := Ava
   - `name` — The name of the object the metric describes.
   - `type` — The type dimension. For status-condition metrics it is the status condition type (e.g. `Ready`); for event metrics it is the Kubernetes event type (`Normal` or `Warning`).
   - `status` — The status of a status condition (e.g. the `Ready` condition). For transition metrics this is the state being left.
+    - `True` — The condition holds.
+    - `False` — The condition does not hold.
+    - `Unknown` — The condition's state has not yet been determined.
   - `reason` — The reason dimension. For status-condition metrics it is the condition reason; for event metrics it is the Kubernetes event reason.
   - `group` — The API group of the object the metric describes, e.g. `karpenter.sh`.
   - `kind` — The Kind of the object the metric describes, e.g. `NodeClaim`.
@@ -913,10 +1095,19 @@ The number of a condition for a given object, type and status. e.g. Alarm := Ava
 ### `client_go_request_total`
 Number of HTTP requests, partitioned by status code and method.
 - Stability Level: STABLE
+- Dimensions:
+  - `code` — The HTTP status code of the Kubernetes API response.
+  - `method` — The HTTP method of the Kubernetes API request.
 
 ### `client_go_request_duration_seconds`
 Request latency in seconds. Broken down by verb, group, version, kind, and subresource.
 - Stability Level: STABLE
+- Dimensions:
+  - `verb` — The HTTP verb of the Kubernetes API request, e.g. `GET`, `POST`.
+  - `group` — The API group of the request's target resource.
+  - `version` — The API version of the request's target resource.
+  - `kind` — The kind of the request's target resource.
+  - `subresource` — The subresource of the request, if any.
 
 ## AWS SDK Go Metrics
 
@@ -966,11 +1157,11 @@ Latency of AWS SDK Go request attempts
 Total number of slow path exercised in renewing leader leases. 'name' is the string used to identify the lease. Please make sure to group by name.
 - Stability Level: STABLE
 - Dimensions:
-  - `name`
+  - `name` — The name of the lease used for leader election.
 
 ### `leader_election_master_status`
 Gauge of if the reporting system is master of the relevant lease, 0 indicates backup, 1 indicates master. 'name' is the string used to identify the lease. Please make sure to group by name.
 - Stability Level: STABLE
 - Dimensions:
-  - `name`
+  - `name` — The name of the lease used for leader election.
 
