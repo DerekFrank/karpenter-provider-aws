@@ -891,6 +891,65 @@ func withTag(tag string) mockOfferingOptions {
 	}
 }
 
+var _ = Describe("Launchable / full-reservation handling (capacity-availability decoupled)", func() {
+	// full builds a reserved offering that is healthy (Available=true) but out of capacity (ReservationCapacity=0).
+	full := func(opts ...mockOfferingOptions) *cloudprovider.Offering {
+		o := makeOffering(karpv1.CapacityTypeReserved, true, opts...)
+		o.ReservationCapacity = 0
+		return o
+	}
+
+	Context("Launchable", func() {
+		It("is true for a reserved offering with remaining capacity", func() {
+			Expect(filter.Launchable(makeOffering(karpv1.CapacityTypeReserved, true, withReservationCapacity(2)))).To(BeTrue())
+		})
+		It("is false for a full reserved offering even though it is Available", func() {
+			Expect(filter.Launchable(full())).To(BeFalse())
+		})
+		It("is false for an unavailable reserved offering regardless of capacity", func() {
+			Expect(filter.Launchable(makeOffering(karpv1.CapacityTypeReserved, false, withReservationCapacity(5)))).To(BeFalse())
+		})
+		It("is true for an available on-demand offering (capacity is not a reservation concept)", func() {
+			Expect(filter.Launchable(makeOffering(karpv1.CapacityTypeOnDemand, true))).To(BeTrue())
+		})
+		It("is false for an unavailable on-demand offering", func() {
+			Expect(filter.Launchable(makeOffering(karpv1.CapacityTypeOnDemand, false))).To(BeFalse())
+		})
+		It("LaunchableOfferings drops full and unavailable offerings", func() {
+			Expect(filter.LaunchableOfferings(cloudprovider.Offerings{
+				makeOffering(karpv1.CapacityTypeReserved, true, withReservationCapacity(1)),
+				full(),
+				makeOffering(karpv1.CapacityTypeOnDemand, true),
+				makeOffering(karpv1.CapacityTypeOnDemand, false),
+			})).To(HaveLen(2))
+		})
+	})
+
+	Context("CapacityBlockFilter", func() {
+		It("does not select a full capacity block, preferring a launchable (pricier) one", func() {
+			f := filter.CapacityBlockFilter(scheduling.NewRequirements(scheduling.NewRequirement(karpv1.CapacityTypeLabelKey, corev1.NodeSelectorOpExists)))
+			kept, _ := f.FilterReject([]*cloudprovider.InstanceType{
+				makeInstanceType("cheap-but-full", withOfferings(full(withCapacityReservationType(v1.CapacityReservationTypeCapacityBlock), withPrice(1.0)))),
+				makeInstanceType("pricier-launchable", withOfferings(makeOffering(karpv1.CapacityTypeReserved, true, withCapacityReservationType(v1.CapacityReservationTypeCapacityBlock), withPrice(10.0), withReservationCapacity(1)))),
+			})
+			Expect(kept).To(HaveLen(1))
+			Expect(kept[0].Name).To(Equal("pricier-launchable"))
+		})
+	})
+
+	Context("CapacityReservationTypeFilter", func() {
+		It("does not select a partition whose only offering is full over a launchable one, even if cheaper", func() {
+			f := filter.CapacityReservationTypeFilter(scheduling.NewRequirements(scheduling.NewRequirement(karpv1.CapacityTypeLabelKey, corev1.NodeSelectorOpIn, karpv1.CapacityTypeReserved)))
+			kept, _ := f.FilterReject([]*cloudprovider.InstanceType{
+				makeInstanceType("full-default", withOfferings(full(withCapacityReservationType(v1.CapacityReservationTypeDefault), withPrice(1.0), withInterruptible(false)))),
+				makeInstanceType("launchable-block", withOfferings(makeOffering(karpv1.CapacityTypeReserved, true, withCapacityReservationType(v1.CapacityReservationTypeCapacityBlock), withPrice(10.0), withReservationCapacity(1)))),
+			})
+			Expect(kept).To(HaveLen(1))
+			Expect(kept[0].Name).To(Equal("launchable-block"))
+		})
+	})
+})
+
 func makeOffering(capacityType string, available bool, opts ...mockOfferingOptions) *cloudprovider.Offering {
 	offering := option.Resolve(opts...)
 	if offering.Requirements == nil {
@@ -902,6 +961,12 @@ func makeOffering(capacityType string, available bool, opts ...mockOfferingOptio
 		capacityType,
 	))
 	offering.Available = available
+	// A reserved offering models a real capacity reservation, which is only launchable when it has remaining capacity.
+	// Since availability and capacity are independent axes, default a reserved fixture to a positive ReservationCapacity
+	// (a launchable reservation). Tests that want a FULL reservation set ReservationCapacity=0 explicitly on the result.
+	if capacityType == karpv1.CapacityTypeReserved && offering.ReservationCapacity == 0 {
+		offering.ReservationCapacity = 1
+	}
 	return offering
 }
 
