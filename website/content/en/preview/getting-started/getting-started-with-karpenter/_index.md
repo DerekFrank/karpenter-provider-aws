@@ -78,6 +78,7 @@ The following cluster configuration will:
 * Use [AWS EKS managed node groups](https://docs.aws.amazon.com/eks/latest/userguide/managed-node-groups.html) for the kube-system and karpenter namespaces. Uncomment fargateProfiles settings (and comment out managedNodeGroups settings) to use Fargate for both namespaces instead.
 * Set KARPENTER_IAM_ROLE_ARN variables.
 * Create a role to allow spot instances.
+* Configure the cluster's `kube-scheduler` to use the `MostAllocated` scoring strategy so it packs pods onto fewer nodes, complementing Karpenter's bin-packing and consolidation for higher utilization and lower cost. See [kube-scheduler settings]({{<ref "../../concepts/scheduling#kube-scheduler-settings" >}}).
 * Run Helm to install Karpenter
 
 {{< tabpane text=true right=false >}}
@@ -149,10 +150,6 @@ Create a default NodePool using the command below. This NodePool uses `securityG
 The `consolidationPolicy` set to `WhenEmptyOrUnderutilized` in the `disruption` block configures Karpenter to reduce cluster cost by removing and replacing nodes. As a result, consolidation will terminate any empty nodes on the cluster. This behavior can be disabled by setting `consolidateAfter` to `Never`, telling Karpenter that it should never consolidate nodes. Review the [NodePool API docs]({{<ref "../../concepts/nodepools" >}}) for more information.
 
 Note: This NodePool will create capacity as long as the sum of all created capacity is less than the specified limit.
-
-{{% alert title="Tip" color="primary" %}}
-Karpenter reduces cost by bin-packing pods onto as few nodes as possible, but the Kubernetes scheduler ultimately decides where pods land. By default `kube-scheduler` *spreads* pods across nodes, which can leave Karpenter's nodes under-packed and cause consolidation to churn. If you manage your cluster's control plane, configuring `kube-scheduler` with the `MostAllocated` scoring strategy aligns pod placement with Karpenter's bin-packing for higher utilization and lower cost — see [kube-scheduler settings]({{<ref "../../concepts/scheduling#kube-scheduler-settings" >}}). This tuning is not available on the Amazon EKS managed control plane used in this guide.
-{{% /alert %}}
 
 {{% script file="./content/en/{VERSION}/getting-started/getting-started-with-karpenter/scripts/step12-add-nodepool.sh" language="bash"%}}
 
