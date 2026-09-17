@@ -717,10 +717,8 @@ kubeSchedulerConfig:
           weight: 1
 ```
 
-The [Getting Started guide]({{<ref "../getting-started/getting-started-with-karpenter#3-create-a-cluster" >}}) creates its cluster with this setting applied.
-
 {{% alert title="Note" color="primary" %}}
-`kube-scheduler` scores nodes based on pod resource *requests*, so `MostAllocated` packs pods onto the fullest feasible nodes and leaves little unreserved capacity on each node. Workloads that set limits higher than their requests rely on that unreserved capacity to burst — under tight packing there is less room to burst into, so a pod may be unable to burst into more memory (risking an OOM kill) or have its CPU throttled sooner than it would under the default spreading behavior. Packing pods onto fewer nodes also concentrates blast radius, since more pods are affected when a node becomes unhealthy. Changing the strategy affects only future scheduling — running pods are not moved — and preferred anti-affinity or topology spreads can still reduce consolidation effectiveness regardless of the scoring strategy.
+`kube-scheduler` scores nodes based on pod resource *requests*, so `MostAllocated` packs pods onto the fullest feasible nodes and leaves little unreserved capacity on each node. Workloads that set limits higher than their requests rely on that unreserved capacity to burst — under tight packing there is less room to burst into, so a pod may be unable to burst into more memory (risking an OOM kill) or have its CPU throttled sooner than it would under the default spreading behavior. Packing pods onto fewer nodes may also concentrate blast radius if pods don't use scheduling constraints to ensure availability, since more pods are affected when a node becomes unhealthy. Changing the strategy affects only future scheduling — running pods are not moved — and preferred anti-affinity or topology spreads can still reduce consolidation effectiveness regardless of the scoring strategy.
 {{% /alert %}}
 
 ### `Exists` Operator
