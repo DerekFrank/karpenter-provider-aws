@@ -517,7 +517,9 @@ func (p *DefaultProvider) getOverrides(
 	}
 	var filteredOfferings []offeringWithParentName
 	for _, it := range instanceTypes {
-		ofs := it.Offerings.Available().Compatible(reqs)
+		// Launchable (not just Available): don't emit a full reservation (ReservationCapacity=0) as a CreateFleet
+		// override — it can't be launched into and would ICE.
+		ofs := instancefilter.LaunchableOfferings(it.Offerings.Compatible(reqs))
 		// If we are generating a launch template for a specific capacity reservation, we only want to include the offering
 		// for that capacity reservation when generating overrides.
 		if capacityReservationID != "" {
@@ -650,28 +652,28 @@ func (p *DefaultProvider) updateUnavailableOfferingsCache(
 		return
 	}
 
-	reservationIDs := make([]string, 0, len(errs))
-	for i := range errs {
-		if awserrors.IsUnfulfillableCapacity(errs[i]) {
-			if awserrors.IsSpreadPlacementGroupLimitError(errs[i]) {
+	// A launch failure into a reserved offering means the reservation is unavailable for a reason beyond capacity
+	// (an ICE / unfulfillable capacity), so mark it in the shared UnavailableOfferings cache — the same channel
+	// spot/on-demand ICEs use — rather than telling the reservation manager. The reservation manager tracks only
+	// capacity (ReservationCapacity); usability lives in the offering's Available flag, driven by this cache. This
+	// keeps a full-but-healthy reservation (Available=true, ReservationCapacity=0) distinct from an ICE'd one.
+	for _, err := range errs {
+		if awserrors.IsUnfulfillableCapacity(err) {
+			if awserrors.IsSpreadPlacementGroupLimitError(err) {
 				continue
 			}
-			capacityReservationDetails := p.getCapacityReservationDetailsForInstance(
-				string(errs[i].LaunchTemplateAndOverrides.Overrides.InstanceType),
-				lo.FromPtr(errs[i].LaunchTemplateAndOverrides.Overrides.AvailabilityZone),
-				instanceTypes,
-			)
-			reservationIDs = append(reservationIDs, capacityReservationDetails.ID)
+			instanceType := err.LaunchTemplateAndOverrides.Overrides.InstanceType
+			zone := aws.ToString(err.LaunchTemplateAndOverrides.Overrides.AvailabilityZone)
 			log.FromContext(ctx).WithValues(
-				"reason", lo.FromPtr(errs[i].ErrorCode),
-				"instance-type", errs[i].LaunchTemplateAndOverrides.Overrides.InstanceType,
-				"zone", lo.FromPtr(errs[i].LaunchTemplateAndOverrides.Overrides.AvailabilityZone),
-				"capacity-reservation-id", capacityReservationDetails.ID,
-			).V(1).Info("marking capacity reservation unavailable")
+				"reason", lo.FromPtr(err.ErrorCode),
+				"instance-type", instanceType,
+				"zone", zone,
+				"capacity-type", karpv1.CapacityTypeReserved,
+			).V(1).Info("marking reserved offering unavailable")
+			p.unavailableOfferings.MarkUnavailable(ctx, instanceType, zone, karpv1.CapacityTypeReserved, map[string]string{
+				"reason": lo.FromPtr(err.ErrorCode),
+			})
 		}
-	}
-	if len(reservationIDs) > 0 {
-		p.capacityReservationProvider.MarkUnavailable(reservationIDs...)
 	}
 }
 
@@ -750,7 +752,10 @@ func getCapacityType(nodeClaim *karpv1.NodeClaim, instanceTypes []*cloudprovider
 		}
 		requirements[karpv1.CapacityTypeLabelKey] = scheduling.NewRequirement(karpv1.CapacityTypeLabelKey, corev1.NodeSelectorOpIn, capacityType)
 		for _, it := range instanceTypes {
-			if len(it.Offerings.Available().Compatible(requirements)) != 0 {
+			// Launchable (not just Available): a full reservation (ReservationCapacity=0) is Available but can't be
+			// launched into, so it must not make us choose the "reserved" capacity type — we'd target a full reservation
+			// and ICE instead of falling back to on-demand/spot.
+			if len(instancefilter.LaunchableOfferings(it.Offerings.Compatible(requirements))) != 0 {
 				return capacityType
 			}
 		}
