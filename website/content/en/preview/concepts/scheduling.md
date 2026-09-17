@@ -682,6 +682,41 @@ requirement:
 ...
 ```
 
+### kube-scheduler settings
+
+Karpenter provisions capacity, but it does not place pods on nodes — that is the job of the Kubernetes [`kube-scheduler`](https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/). Karpenter simulates a tight bin-packing of pending pods to decide which nodes to launch, then relies on `kube-scheduler` to bind those pods to nodes. When the scheduler's placement decisions diverge from Karpenter's simulation, Karpenter-launched nodes can end up under-packed. This lowers utilization and causes [Consolidation]({{<ref "./disruption#consolidation" >}}) to churn as it repeatedly tries to re-pack pods and remove the excess nodes.
+
+By default, `kube-scheduler` scores nodes with the `NodeResourcesFit` plugin's `LeastAllocated` strategy, which *spreads* pods to maximize the free resources left on each node. This is the opposite of Karpenter's goal of packing pods onto as few nodes as possible. Switching the scheduler to the `MostAllocated` strategy makes it prefer the most-utilized feasible node, aligning pod placement with Karpenter's bin-packing. The result is higher node utilization, fewer under-packed nodes, more empty nodes available for consolidation, and lower cost.
+
+Configure this through the scheduler's [`KubeSchedulerConfiguration`](https://kubernetes.io/docs/reference/scheduling/config/):
+
+```yaml
+apiVersion: kubescheduler.config.k8s.io/v1
+kind: KubeSchedulerConfiguration
+profiles:
+  - schedulerName: default-scheduler
+    pluginConfig:
+      - name: NodeResourcesFit
+        args:
+          scoringStrategy:
+            type: MostAllocated       # default is LeastAllocated
+            resources:
+              - name: cpu
+                weight: 1
+              - name: memory
+                weight: 1
+```
+
+{{% alert title="Note" color="primary" %}}
+Setting the scoring strategy requires passing a `--config` file to the `kube-scheduler` binary, so it is only available on clusters where you manage the control plane (for example self-managed, `kubeadm`, or `kOps` clusters).
+
+Managed control planes such as **Amazon EKS** do not expose `kube-scheduler` configuration. On those clusters you can get the same behavior by deploying a [second scheduler](https://kubernetes.io/docs/tasks/extend-kubernetes/configure-multiple-schedulers/) as a workload with the configuration above and setting `schedulerName` on the pods you want it to place.
+{{% /alert %}}
+
+{{% alert title="Note" color="primary" %}}
+`MostAllocated` packs pods onto the fullest feasible nodes, which leaves less spare capacity on each node to absorb sudden bursts or in-place pod resizes. Workloads that scale up in large spikes may need to wait for Karpenter to launch a new node more often than with the default spreading behavior. Consider whether this trade-off is acceptable for your workloads. Note also that preferred anti-affinity and topology spreads can still reduce consolidation effectiveness regardless of the scoring strategy.
+{{% /alert %}}
+
 ### `Exists` Operator
 
 The `Exists` operator can be used on a NodePool to provide workload segregation across nodes.

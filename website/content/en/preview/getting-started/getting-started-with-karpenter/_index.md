@@ -150,6 +150,10 @@ The `consolidationPolicy` set to `WhenEmptyOrUnderutilized` in the `disruption` 
 
 Note: This NodePool will create capacity as long as the sum of all created capacity is less than the specified limit.
 
+{{% alert title="Tip" color="primary" %}}
+Karpenter reduces cost by bin-packing pods onto as few nodes as possible, but the Kubernetes scheduler ultimately decides where pods land. By default `kube-scheduler` *spreads* pods across nodes, which can leave Karpenter's nodes under-packed and cause consolidation to churn. If you manage your cluster's control plane, configuring `kube-scheduler` with the `MostAllocated` scoring strategy aligns pod placement with Karpenter's bin-packing for higher utilization and lower cost — see [kube-scheduler settings]({{<ref "../../concepts/scheduling#kube-scheduler-settings" >}}). This tuning is not available on the Amazon EKS managed control plane used in this guide.
+{{% /alert %}}
+
 {{% script file="./content/en/{VERSION}/getting-started/getting-started-with-karpenter/scripts/step12-add-nodepool.sh" language="bash"%}}
 
 Karpenter is now active and ready to begin provisioning nodes.
