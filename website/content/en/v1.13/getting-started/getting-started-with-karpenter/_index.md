@@ -78,6 +78,7 @@ The following cluster configuration will:
 * Use [AWS EKS managed node groups](https://docs.aws.amazon.com/eks/latest/userguide/managed-node-groups.html) for the kube-system and karpenter namespaces. Uncomment fargateProfiles settings (and comment out managedNodeGroups settings) to use Fargate for both namespaces instead.
 * Set KARPENTER_IAM_ROLE_ARN variables.
 * Create a role to allow spot instances.
+* Configure the cluster's `kube-scheduler` to use the `MostAllocated` scoring strategy so it packs pods onto fewer nodes, complementing Karpenter's bin-packing and consolidation for higher utilization and lower cost. See [kube-scheduler settings]({{<ref "../../concepts/scheduling#kube-scheduler-settings" >}}).
 * Run Helm to install Karpenter
 
 {{< tabpane text=true right=false >}}
