@@ -259,7 +259,7 @@ func NewOperator(ctx context.Context, operator *operator.Operator) (context.Cont
 		// longer returned by EC2. NoExpiration ensures cached instances in zonally shifted AZs remain
 		// available for the zonal shift guards in Get(), Delete(), and CreateTags(), even if a
 		// DescribeInstances sweep cannot return instances from the impaired AZ.
-		cache.New(cache.NoExpiration, cache.NoExpiration),
+		instance.NewCache(cache.New(cache.NoExpiration, cache.NoExpiration)),
 	)
 	instanceStatusProvider := instancestatus.NewDefaultProvider(ec2api, operator.Clock)
 

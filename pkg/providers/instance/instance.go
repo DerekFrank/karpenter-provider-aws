@@ -107,6 +107,31 @@ var SkipCache = func(opts *options) {
 	opts.SkipCache = true
 }
 
+// Cache wraps the instance cache with a "primed" flag, making whether the cache has ever been populated a property of
+// the cache itself rather than separate provider state. This keeps the two from diverging: flushing the cache also
+// clears the flag. List refuses to serve an unprimed cache (see DefaultProvider.List) so consumers don't mistake a
+// not-yet-populated cache for an empty fleet.
+type Cache struct {
+	*cache.Cache
+	synced atomic.Bool
+}
+
+func NewCache(c *cache.Cache) *Cache {
+	return &Cache{Cache: c}
+}
+
+// MarkSynced records that the cache has been populated at least once.
+func (c *Cache) MarkSynced() { c.synced.Store(true) }
+
+// Synced reports whether the cache has been populated at least once.
+func (c *Cache) Synced() bool { return c.synced.Load() }
+
+// Flush clears the cache and returns it to the unprimed state.
+func (c *Cache) Flush() {
+	c.Cache.Flush()
+	c.synced.Store(false)
+}
+
 type DefaultProvider struct {
 	region                      string
 	recorder                    events.Recorder
@@ -118,10 +143,7 @@ type DefaultProvider struct {
 	capacityReservationProvider capacityreservation.Provider
 	placementGroupProvider      placementgroup.Provider
 	zonalshiftProvider          arczonalshift.Provider
-	instanceCache               *cache.Cache
-	// synced is set once SyncCache has successfully populated the instance cache at least once. Until then, List
-	// refuses to serve the cold cache so consumers don't mistake a not-yet-populated cache for an empty fleet.
-	synced atomic.Bool
+	instanceCache               *Cache
 }
 
 func NewDefaultProvider(
@@ -135,7 +157,7 @@ func NewDefaultProvider(
 	capacityReservationProvider capacityreservation.Provider,
 	placementGroupProvider placementgroup.Provider,
 	zonalshiftProvider arczonalshift.Provider,
-	instanceCache *cache.Cache,
+	instanceCache *Cache,
 ) *DefaultProvider {
 	return &DefaultProvider{
 		region:                      region,
@@ -234,20 +256,13 @@ func (p *DefaultProvider) List(_ context.Context) ([]*Instance, error) {
 	// Refuse to serve a cache that has never been populated. Consumers such as garbage collection treat the absence
 	// of an instance from List as a signal to delete its NodeClaim/instance, so returning an empty cold cache could
 	// cause wrongful deletion. Returning an error makes callers requeue until the instance cache controller primes it.
-	if !p.synced.Load() {
+	if !p.instanceCache.Synced() {
 		return nil, fmt.Errorf("instance cache has not been populated yet")
 	}
 	return lo.FilterMap(lo.Values(p.instanceCache.Items()), func(item cache.Item, _ int) (*Instance, bool) {
 		inst, ok := item.Object.(*Instance)
 		return inst, ok
 	}), nil
-}
-
-// ResetCache clears the instance cache and marks it unsynced, returning the provider to a cold state. It is intended
-// for tests so each case starts from a clean cache; production code refreshes the cache via SyncCache.
-func (p *DefaultProvider) ResetCache() {
-	p.instanceCache.Flush()
-	p.synced.Store(false)
 }
 
 // SyncCache refreshes the instance cache from EC2 with a paginated, tag-filtered DescribeInstances sweep. It populates
@@ -300,7 +315,7 @@ func (p *DefaultProvider) SyncCache(ctx context.Context) error {
 		p.instanceCache.Delete(id)
 	}
 	// The cache has now been populated at least once; List may serve reads.
-	p.synced.Store(true)
+	p.instanceCache.MarkSynced()
 	return cloudprovider.IgnoreNodeClaimNotFoundError(err)
 }
 

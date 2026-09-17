@@ -77,7 +77,7 @@ type Environment struct {
 	AMICache                             *cache.Cache
 	EC2Cache                             *cache.Cache
 	InstanceTypeCache                    *cache.Cache
-	InstanceCache                        *cache.Cache
+	InstanceCache                        *instance.Cache
 	OfferingCache                        *cache.Cache
 	UnavailableOfferingsCache            *awscache.UnavailableOfferings
 	LaunchTemplateCache                  *cache.Cache
@@ -132,7 +132,7 @@ func NewEnvironment(ctx context.Context, env *coretest.Environment) *Environment
 	ec2Cache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
 	instanceTypeCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
 	// Instance cache entries never expire. See comment in pkg/operator/operator.go.
-	instanceCache := cache.New(cache.NoExpiration, cache.NoExpiration)
+	instanceCache := instance.NewCache(cache.New(cache.NoExpiration, cache.NoExpiration))
 	offeringCache := cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
 	discoveredCapacityCache := cache.New(awscache.DiscoveredCapacityCacheTTL, awscache.DefaultCleanupInterval)
 	unavailableOfferingsCache := awscache.NewUnavailableOfferings()
@@ -286,7 +286,7 @@ func (env *Environment) Reset() {
 
 	env.AMICache.Flush()
 	env.EC2Cache.Flush()
-	env.InstanceProvider.ResetCache()
+	env.InstanceCache.Flush()
 	env.UnavailableOfferingsCache.Flush()
 	env.OfferingCache.Flush()
 	env.LaunchTemplateCache.Flush()
