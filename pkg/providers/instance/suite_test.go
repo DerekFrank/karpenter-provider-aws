@@ -581,6 +581,7 @@ var _ = Describe("InstanceProvider", func() {
 		})
 
 		coreoptions.FromContext(ctx).FeatureGates.ReservedCapacity = false
+		Expect(awsEnv.InstanceProvider.SyncCache(ctx)).To(Succeed())
 		nodeClaims, err := cloudProvider.List(ctx)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(nodeClaims).To(HaveLen(1))
@@ -649,6 +650,7 @@ var _ = Describe("InstanceProvider", func() {
 				},
 			)
 		}
+		Expect(awsEnv.InstanceProvider.SyncCache(ctx)).To(Succeed())
 		instances, err := awsEnv.InstanceProvider.List(ctx)
 		Expect(err).To(BeNil())
 		Expect(instances).To(HaveLen(20))
@@ -1142,9 +1144,8 @@ var _ = Describe("InstanceProvider", func() {
 			// Remove the instance from EC2 (simulates spot reclaim)
 			awsEnv.EC2API.Instances.Delete(id)
 
-			// Call List — this should evict the stale cache entry
-			_, err = awsEnv.InstanceProvider.List(ctx)
-			Expect(err).ToNot(HaveOccurred())
+			// Run a cache sync — this should evict the stale cache entry
+			Expect(awsEnv.InstanceProvider.SyncCache(ctx)).To(Succeed())
 
 			// Now Get without SkipCache should go to EC2 and return NotFound
 			_, err = awsEnv.InstanceProvider.Get(ctx, id)
@@ -1187,9 +1188,8 @@ var _ = Describe("InstanceProvider", func() {
 			})
 			Expect(awsEnv.ZonalShiftProvider.UpdateZonalShifts(ctx)).To(Succeed())
 
-			// List should NOT evict because the zone is shifted
-			_, err = awsEnv.InstanceProvider.List(ctx)
-			Expect(err).ToNot(HaveOccurred())
+			// SyncCache should NOT evict because the zone is shifted
+			Expect(awsEnv.InstanceProvider.SyncCache(ctx)).To(Succeed())
 
 			// Get without SkipCache should still return the cached instance
 			inst, err = awsEnv.InstanceProvider.Get(ctx, id)
