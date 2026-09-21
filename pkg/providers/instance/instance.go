@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"sync/atomic"
 
 	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
@@ -120,8 +121,10 @@ type DefaultProvider struct {
 	zonalshiftProvider          arczonalshift.Provider
 	instanceCache               *cache.Cache
 	// synced is set once SyncCache has successfully populated the instance cache at least once. Until then, List
-	// refuses to serve the cold cache so consumers don't mistake a not-yet-populated cache for an empty fleet.
+	// lazily populates the cache on first use (guarded by syncMu) so callers never observe a cold cache as an empty
+	// fleet. After the first sync, the instance cache controller keeps the cache fresh and List is a pure cache read.
 	synced atomic.Bool
+	syncMu sync.Mutex
 }
 
 func NewDefaultProvider(
@@ -227,20 +230,33 @@ func (p *DefaultProvider) Get(ctx context.Context, id string, opts ...Options) (
 	return instances[id], nil
 }
 
-// List returns all instances currently held in the instance cache. It performs no EC2 calls; the cache is refreshed
-// out-of-band by SyncCache (driven by the instance cache controller). Note this may include instances retained in
-// zonally-shifted AZs that a live DescribeInstances would not currently return.
-func (p *DefaultProvider) List(_ context.Context) ([]*Instance, error) {
-	// Refuse to serve a cache that has never been populated. Consumers such as garbage collection treat the absence
-	// of an instance from List as a signal to delete its NodeClaim/instance, so returning an empty cold cache could
-	// cause wrongful deletion. Returning an error makes callers requeue until the instance cache controller primes it.
+// List returns all instances currently held in the instance cache. On the first call before the cache has been
+// populated it lazily runs a SyncCache so callers never observe a cold cache as an empty fleet (consumers such as
+// garbage collection treat a missing instance as a signal to delete its NodeClaim/instance). After the first sync the
+// cache is kept fresh out-of-band by the instance cache controller and List performs no EC2 calls. Note the result
+// may include instances retained in zonally-shifted AZs that a live DescribeInstances would not currently return.
+func (p *DefaultProvider) List(ctx context.Context) ([]*Instance, error) {
 	if !p.synced.Load() {
-		return nil, fmt.Errorf("instance cache has not been populated yet")
+		if err := p.ensureSynced(ctx); err != nil {
+			return nil, err
+		}
 	}
 	return lo.FilterMap(lo.Values(p.instanceCache.Items()), func(item cache.Item, _ int) (*Instance, bool) {
 		inst, ok := item.Object.(*Instance)
 		return inst, ok
 	}), nil
+}
+
+// ensureSynced lazily populates the cache exactly once across concurrent callers. It double-checks synced under the
+// lock so a single SyncCache runs on cold start rather than each caller triggering its own DescribeInstances sweep,
+// and retries on the next call if the sync failed (synced stays false until SyncCache succeeds).
+func (p *DefaultProvider) ensureSynced(ctx context.Context) error {
+	p.syncMu.Lock()
+	defer p.syncMu.Unlock()
+	if p.synced.Load() {
+		return nil
+	}
+	return p.SyncCache(ctx)
 }
 
 // ResetCache clears the instance cache and marks it unsynced, returning the provider to a cold state. It is intended

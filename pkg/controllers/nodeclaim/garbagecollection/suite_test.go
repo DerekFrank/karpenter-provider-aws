@@ -141,9 +141,6 @@ var _ = Describe("GarbageCollection", func() {
 		instance.LaunchTime = aws.Time(time.Now().Add(-time.Minute))
 		awsEnv.EC2API.Instances.Store(aws.ToString(instance.InstanceId), *instance)
 
-		// GC reads instances from the cache, which is refreshed out-of-band by the instance cache controller. Sync it so
-		// the reconcile observes the instances seeded into the EC2 fake.
-		Expect(awsEnv.InstanceProvider.SyncCache(ctx)).To(Succeed())
 		ExpectSingletonReconciled(ctx, garbageCollectionController)
 		awsEnv.InstanceCache.Flush()
 		_, err := cloudProvider.Get(ctx, providerID)
@@ -160,9 +157,6 @@ var _ = Describe("GarbageCollection", func() {
 		})
 		ExpectApplied(ctx, env.Client, node)
 
-		// GC reads instances from the cache, which is refreshed out-of-band by the instance cache controller. Sync it so
-		// the reconcile observes the instances seeded into the EC2 fake.
-		Expect(awsEnv.InstanceProvider.SyncCache(ctx)).To(Succeed())
 		ExpectSingletonReconciled(ctx, garbageCollectionController)
 		awsEnv.InstanceCache.Flush()
 		_, err := cloudProvider.Get(ctx, providerID)
@@ -212,9 +206,6 @@ var _ = Describe("GarbageCollection", func() {
 			)
 			ids = append(ids, instanceID)
 		}
-		// GC reads instances from the cache, which is refreshed out-of-band by the instance cache controller. Sync it so
-		// the reconcile observes the instances seeded into the EC2 fake.
-		Expect(awsEnv.InstanceProvider.SyncCache(ctx)).To(Succeed())
 		ExpectSingletonReconciled(ctx, garbageCollectionController)
 
 		wg := sync.WaitGroup{}
@@ -273,9 +264,6 @@ var _ = Describe("GarbageCollection", func() {
 			nodeClaims = append(nodeClaims, nodeClaim)
 			ids = append(ids, instanceID)
 		}
-		// GC reads instances from the cache, which is refreshed out-of-band by the instance cache controller. Sync it so
-		// the reconcile observes the instances seeded into the EC2 fake.
-		Expect(awsEnv.InstanceProvider.SyncCache(ctx)).To(Succeed())
 		ExpectSingletonReconciled(ctx, garbageCollectionController)
 
 		wg := sync.WaitGroup{}
@@ -297,9 +285,6 @@ var _ = Describe("GarbageCollection", func() {
 		instance.LaunchTime = aws.Time(time.Now())
 		awsEnv.EC2API.Instances.Store(aws.ToString(instance.InstanceId), *instance)
 
-		// GC reads instances from the cache, which is refreshed out-of-band by the instance cache controller. Sync it so
-		// the reconcile observes the instances seeded into the EC2 fake.
-		Expect(awsEnv.InstanceProvider.SyncCache(ctx)).To(Succeed())
 		ExpectSingletonReconciled(ctx, garbageCollectionController)
 		_, err := cloudProvider.Get(ctx, providerID)
 		Expect(err).NotTo(HaveOccurred())
@@ -314,9 +299,6 @@ var _ = Describe("GarbageCollection", func() {
 		instance.LaunchTime = aws.Time(time.Now().Add(-time.Minute))
 		awsEnv.EC2API.Instances.Store(aws.ToString(instance.InstanceId), *instance)
 
-		// GC reads instances from the cache, which is refreshed out-of-band by the instance cache controller. Sync it so
-		// the reconcile observes the instances seeded into the EC2 fake.
-		Expect(awsEnv.InstanceProvider.SyncCache(ctx)).To(Succeed())
 		ExpectSingletonReconciled(ctx, garbageCollectionController)
 		_, err := cloudProvider.Get(ctx, providerID)
 		Expect(err).NotTo(HaveOccurred())
@@ -343,9 +325,6 @@ var _ = Describe("GarbageCollection", func() {
 		})
 		ExpectApplied(ctx, env.Client, nodeClaim, node)
 
-		// GC reads instances from the cache, which is refreshed out-of-band by the instance cache controller. Sync it so
-		// the reconcile observes the instances seeded into the EC2 fake.
-		Expect(awsEnv.InstanceProvider.SyncCache(ctx)).To(Succeed())
 		ExpectSingletonReconciled(ctx, garbageCollectionController)
 		_, err := cloudProvider.Get(ctx, providerID)
 		Expect(err).ToNot(HaveOccurred())
@@ -406,9 +385,6 @@ var _ = Describe("GarbageCollection", func() {
 			ids = append(ids, instanceID)
 			nodes = append(nodes, node)
 		}
-		// GC reads instances from the cache, which is refreshed out-of-band by the instance cache controller. Sync it so
-		// the reconcile observes the instances seeded into the EC2 fake.
-		Expect(awsEnv.InstanceProvider.SyncCache(ctx)).To(Succeed())
 		ExpectSingletonReconciled(ctx, garbageCollectionController)
 
 		wg := sync.WaitGroup{}

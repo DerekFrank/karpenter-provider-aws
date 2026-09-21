@@ -95,14 +95,19 @@ var _ = Describe("Instance Cache Controller", func() {
 		id := aws.ToString(inst.InstanceId)
 		awsEnv.EC2API.Instances.Store(id, inst)
 
-		// Before the cache has ever been synced, List refuses to serve a cold cache so consumers don't mistake a
-		// not-yet-populated cache for an empty fleet.
-		_, err := awsEnv.InstanceProvider.List(ctx)
-		Expect(err).To(HaveOccurred())
-
 		ExpectSingletonReconciled(ctx, controller)
 
 		// After the controller reconciles, the cache is populated and List returns the instance.
+		instances, err := awsEnv.InstanceProvider.List(ctx)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(lo.Map(instances, func(i *instance.Instance, _ int) string { return i.ID })).To(ConsistOf(id))
+	})
+	It("should lazily populate the cache on the first List before the controller has run", func() {
+		inst := managedInstance()
+		id := aws.ToString(inst.InstanceId)
+		awsEnv.EC2API.Instances.Store(id, inst)
+
+		// No controller reconcile yet: the first List lazily syncs the cache rather than returning an empty fleet.
 		instances, err := awsEnv.InstanceProvider.List(ctx)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(lo.Map(instances, func(i *instance.Instance, _ int) string { return i.ID })).To(ConsistOf(id))
