@@ -129,4 +129,13 @@ var _ = Describe("Instance Cache Controller", func() {
 		_, err = awsEnv.InstanceProvider.Get(ctx, id)
 		Expect(corecloudprovider.IsNodeClaimNotFoundError(err)).To(BeTrue())
 	})
+	It("should expose seconds since the last successful sync as a metric", func() {
+		ExpectSingletonReconciled(ctx, controller)
+
+		// The gauge is computed at scrape time, so right after a sync it should read a small, non-negative age.
+		metric, ok := FindMetricWithLabelValues("karpenter_instance_cache_seconds_since_last_sync", map[string]string{})
+		Expect(ok).To(BeTrue())
+		Expect(metric.GetGauge().GetValue()).To(BeNumerically(">=", 0))
+		Expect(metric.GetGauge().GetValue()).To(BeNumerically("<", 60))
+	})
 })

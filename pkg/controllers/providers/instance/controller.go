@@ -57,6 +57,9 @@ func (c *Controller) Reconcile(ctx context.Context) (reconciler.Result, error) {
 	if err := c.instanceProvider.SyncCache(ctx); err != nil {
 		return reconciler.Result{}, fmt.Errorf("syncing instance cache, %w", err)
 	}
+	// Record the successful sync time so cache staleness (exposed as seconds_since_last_sync) is observable. If this
+	// controller stalls, that gauge keeps climbing while List/Get serve an increasingly stale cache.
+	recordSync(time.Now())
 	return reconciler.Result{RequeueAfter: cacheRefreshInterval}, nil
 }
 
