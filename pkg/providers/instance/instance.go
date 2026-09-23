@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"sort"
 	"sync"
-	"sync/atomic"
 
 	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/awslabs/operatorpkg/aws/middleware"
@@ -120,11 +119,11 @@ type DefaultProvider struct {
 	placementGroupProvider      placementgroup.Provider
 	zonalshiftProvider          arczonalshift.Provider
 	instanceCache               *cache.Cache
-	// synced is set once SyncCache has successfully populated the instance cache at least once. Until then, List
-	// lazily populates the cache on first use (guarded by syncMu) so callers never observe a cold cache as an empty
-	// fleet. After the first sync, the instance cache controller keeps the cache fresh and List is a pure cache read.
-	synced atomic.Bool
+	// syncMu serializes cache syncs and guards synced. synced is set once SyncCache has populated the instance cache
+	// at least once; until then List lazily populates it (deduped across concurrent callers by syncMu) rather than
+	// serving a cold cache as an empty fleet. After the first sync the instance cache controller keeps it fresh.
 	syncMu sync.Mutex
+	synced bool
 }
 
 func NewDefaultProvider(
@@ -236,34 +235,30 @@ func (p *DefaultProvider) Get(ctx context.Context, id string, opts ...Options) (
 // cache is kept fresh out-of-band by the instance cache controller and List performs no EC2 calls. Note the result
 // may include instances retained in zonally-shifted AZs that a live DescribeInstances would not currently return.
 func (p *DefaultProvider) List(ctx context.Context) ([]*Instance, error) {
-	if !p.synced.Load() {
-		if err := p.ensureSynced(ctx); err != nil {
+	// Lazily populate the cache on first use so callers never observe a cold cache as an empty fleet. syncMu ensures a
+	// single DescribeInstances sweep runs across concurrent cold callers, and lets a failed sync retry on the next
+	// call (synced stays false until a sync succeeds).
+	p.syncMu.Lock()
+	if !p.synced {
+		if err := p.syncCache(ctx); err != nil {
+			p.syncMu.Unlock()
 			return nil, err
 		}
 	}
+	p.syncMu.Unlock()
 	return lo.FilterMap(lo.Values(p.instanceCache.Items()), func(item cache.Item, _ int) (*Instance, bool) {
 		inst, ok := item.Object.(*Instance)
 		return inst, ok
 	}), nil
 }
 
-// ensureSynced lazily populates the cache exactly once across concurrent callers. It double-checks synced under the
-// lock so a single SyncCache runs on cold start rather than each caller triggering its own DescribeInstances sweep,
-// and retries on the next call if the sync failed (synced stays false until SyncCache succeeds).
-func (p *DefaultProvider) ensureSynced(ctx context.Context) error {
-	p.syncMu.Lock()
-	defer p.syncMu.Unlock()
-	if p.synced.Load() {
-		return nil
-	}
-	return p.SyncCache(ctx)
-}
-
 // ResetCache clears the instance cache and marks it unsynced, returning the provider to a cold state. It is intended
 // for tests so each case starts from a clean cache; production code refreshes the cache via SyncCache.
 func (p *DefaultProvider) ResetCache() {
+	p.syncMu.Lock()
+	defer p.syncMu.Unlock()
 	p.instanceCache.Flush()
-	p.synced.Store(false)
+	p.synced = false
 }
 
 // SyncCache refreshes the instance cache from EC2 with a paginated, tag-filtered DescribeInstances sweep. It populates
@@ -271,6 +266,13 @@ func (p *DefaultProvider) ResetCache() {
 // where DescribeInstances may not return them. It is the sole path that issues the fleet-wide DescribeInstances, and
 // is driven on an interval by the instance cache controller so List/Get consumers share a single describe.
 func (p *DefaultProvider) SyncCache(ctx context.Context) error {
+	p.syncMu.Lock()
+	defer p.syncMu.Unlock()
+	return p.syncCache(ctx)
+}
+
+// syncCache performs the DescribeInstances sweep and cache update. Callers must hold syncMu.
+func (p *DefaultProvider) syncCache(ctx context.Context) error {
 	var out = &ec2.DescribeInstancesOutput{}
 
 	paginator := ec2.NewDescribeInstancesPaginator(p.ec2api, &ec2.DescribeInstancesInput{
@@ -316,7 +318,7 @@ func (p *DefaultProvider) SyncCache(ctx context.Context) error {
 		p.instanceCache.Delete(id)
 	}
 	// The cache has now been populated at least once; List may serve reads.
-	p.synced.Store(true)
+	p.synced = true
 	return cloudprovider.IgnoreNodeClaimNotFoundError(err)
 }
 
