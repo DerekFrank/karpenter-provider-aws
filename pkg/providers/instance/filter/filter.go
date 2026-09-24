@@ -265,6 +265,12 @@ func (f capacityBlockFilter) FilterReject(instanceTypes []*cloudprovider.Instanc
 			selectedInstanceType = it
 		}
 	}
+	// No launchable capacity block was found — e.g. every compatible block is full (Available=true, ReservationCapacity=0)
+	// now that availability and capacity are decoupled. There's nothing to pin the launch to, so keep none and reject all
+	// (launching a non-capacity-block instance for a capacity-block request would be wrong).
+	if selectedInstanceType == nil {
+		return nil, instanceTypes
+	}
 	return []*cloudprovider.InstanceType{selectedInstanceType}, lo.Reject(instanceTypes, func(it *cloudprovider.InstanceType, _ int) bool {
 		return it.Name == selectedInstanceType.Name
 	})

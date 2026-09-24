@@ -142,13 +142,15 @@ func (h *InterruptionHandler) markUnavailableOfferings(ctx context.Context, msg 
 	if msg.Kind() == messages.CapacityReservationInterruptionKind && h.unavailableOfferingsCache != nil {
 		zone := nodeClaim.Labels[corev1.LabelTopologyZone]
 		instanceType := nodeClaim.Labels[corev1.LabelInstanceTypeStable]
-		if zone != "" && instanceType != "" {
+		reservationID := nodeClaim.Labels[cloudprovider.ReservationIDLabel]
+		if zone != "" && instanceType != "" && reservationID != "" {
 			// A reservation interruption is a non-capacity unavailability, so record it in the shared
 			// UnavailableOfferings cache (which drives the reserved offering's Available flag) rather than the
-			// reservation manager, which tracks only capacity.
+			// reservation manager, which tracks only capacity. Scope it to this reservation ID so interrupting one
+			// reservation doesn't mark other reservations sharing the same instance type + zone unavailable.
 			h.unavailableOfferingsCache.MarkUnavailable(ctx, ec2types.InstanceType(instanceType), zone, karpv1.CapacityTypeReserved, map[string]string{
 				"reason": string(msg.Kind()),
-			})
+			}, cache.WithReservationID(reservationID))
 		}
 	}
 }

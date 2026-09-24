@@ -318,7 +318,10 @@ var _ = Describe("InterruptionHandling", func() {
 
 			// A reservation interruption is a non-capacity unavailability: it marks the reserved offering in the shared
 			// UnavailableOfferings cache (driving Available=false), rather than zeroing the reservation manager's count.
-			Expect(unavailableOfferingsCache.IsUnavailable("m5.large", "coretest-zone-1a", []string{}, karpv1.CapacityTypeReserved)).To(BeTrue())
+			// The entry is scoped to the interrupted reservation ID...
+			Expect(unavailableOfferingsCache.IsUnavailable("m5.large", "coretest-zone-1a", []string{}, karpv1.CapacityTypeReserved, awscache.WithReservationID("cr-56fac701cc1951b03"))).To(BeTrue())
+			// ...so another reservation sharing the same instance type + zone is NOT poisoned by this interruption.
+			Expect(unavailableOfferingsCache.IsUnavailable("m5.large", "coretest-zone-1a", []string{}, karpv1.CapacityTypeReserved, awscache.WithReservationID("cr-other"))).To(BeFalse())
 		})
 		It("should forcefully terminate the NodeClaim when an instance is unhealthy due to EC2 system status checks", func() {
 			ctx = options.ToContext(ctx, test.Options(test.OptionsFields{InterruptionQueue: lo.ToPtr("")}))

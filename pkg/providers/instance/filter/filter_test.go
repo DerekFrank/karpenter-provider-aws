@@ -466,6 +466,20 @@ var _ = Describe("InstanceFiltersTest", func() {
 				Expect(it.Offerings).To(HaveLen(2))
 			}
 		})
+		It("should not panic and keep nothing when the only capacity-block offering is full (Available, cap=0)", func() {
+			// A full-but-healthy capacity block is Available=true with ReservationCapacity=0 (capacity/availability
+			// decoupled), so shouldFilter sees it but Launchable rejects it — leaving no offering to pin. This must keep
+			// nothing rather than dereference a nil selection.
+			f := filter.CapacityBlockFilter(scheduling.NewRequirements(scheduling.NewRequirement(karpv1.CapacityTypeLabelKey, corev1.NodeSelectorOpExists)))
+			// makeOffering defaults a reserved fixture to positive capacity, so zero it on the result to model a full block.
+			fullBlock := makeOffering(karpv1.CapacityTypeReserved, true, withPrice(1.0), withCapacityReservationType(v1.CapacityReservationTypeCapacityBlock))
+			fullBlock.ReservationCapacity = 0
+			kept, rejected := f.FilterReject([]*cloudprovider.InstanceType{
+				makeInstanceType("full-block", withOfferings(fullBlock)),
+			})
+			Expect(kept).To(BeEmpty())
+			expectInstanceTypes(rejected, "full-block")
+		})
 	})
 
 	Context("ReservedOfferingFilter", func() {

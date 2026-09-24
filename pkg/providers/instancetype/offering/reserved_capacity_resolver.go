@@ -104,7 +104,7 @@ func (r *ReservedCapacityResolver) ResolveOfferings(
 			// (RFC kubernetes-sigs/karpenter#3203) recognize a no-headroom reservation instead of stalling. A reservation
 			// that is unavailable for another reason (ICE'd, expiring, incompatible) is Available=false and is respected.
 			Available: isCompatibleWithNodeClass && itZones.Has(reservation.AvailabilityZone) && reservation.State != v1.CapacityReservationStateExpiring && !isZonalShifted &&
-				!r.UnavailableOfferings.IsUnavailable(ec2types.InstanceType(it.Name), reservation.AvailabilityZone, nil, karpv1.CapacityTypeReserved),
+				!r.UnavailableOfferings.IsUnavailable(ec2types.InstanceType(it.Name), reservation.AvailabilityZone, nil, karpv1.CapacityTypeReserved, awscache.WithReservationID(reservation.ID)),
 			ReservationCapacity: reservationCapacity,
 		}
 		if zoneFound {
