@@ -322,6 +322,9 @@ var _ = Describe("InterruptionHandling", func() {
 			Expect(unavailableOfferingsCache.IsUnavailable("m5.large", "coretest-zone-1a", []string{}, karpv1.CapacityTypeReserved, awscache.WithReservationID("cr-56fac701cc1951b03"))).To(BeTrue())
 			// ...so another reservation sharing the same instance type + zone is NOT poisoned by this interruption.
 			Expect(unavailableOfferingsCache.IsUnavailable("m5.large", "coretest-zone-1a", []string{}, karpv1.CapacityTypeReserved, awscache.WithReservationID("cr-other"))).To(BeFalse())
+			// ...and the SPOT capacity type for this instance type + zone is likewise untouched: a reserved-offering
+			// interruption must not spill over into the spot ICE cache.
+			Expect(unavailableOfferingsCache.IsUnavailable("m5.large", "coretest-zone-1a", []string{}, karpv1.CapacityTypeSpot)).To(BeFalse())
 		})
 		It("should forcefully terminate the NodeClaim when an instance is unhealthy due to EC2 system status checks", func() {
 			ctx = options.ToContext(ctx, test.Options(test.OptionsFields{InterruptionQueue: lo.ToPtr("")}))

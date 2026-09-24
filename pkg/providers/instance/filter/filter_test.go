@@ -562,6 +562,37 @@ var _ = Describe("InstanceFiltersTest", func() {
 				return len(it.Offerings)
 			})).To(ConsistOf(2, 3))
 		})
+		It("should drop a full reserved offering in a zone and reject an instance whose only reserved offering is full", func() {
+			// makeOffering auto-bumps a reserved fixture to positive capacity, so zero it explicitly to model a FULL-but-healthy
+			// reservation (Available=true, ReservationCapacity=0). A full reservation can't be launched into, so the filter must
+			// skip it (and reject the instance type if that leaves no capacity-bearing reserved offering), yielding the
+			// pre-launch ICE as before.
+			fullZone2 := makeOffering(karpv1.CapacityTypeReserved, true, withZone("2"), withReservationID("full"))
+			fullZone2.ReservationCapacity = 0
+			fullOnly := makeOffering(karpv1.CapacityTypeReserved, true, withZone("1"), withReservationID("full"))
+			fullOnly.ReservationCapacity = 0
+			kept, rejected := f.FilterReject([]*cloudprovider.InstanceType{
+				// Zone 1 has a launchable reserved offering; zone 2's only reserved offering is full. The full offering is
+				// dropped, leaving just the launchable zone-1 offering, so the instance type is kept.
+				makeInstanceType("reserved-instance-mixed-zones", withOfferings(
+					makeOffering(karpv1.CapacityTypeOnDemand, true),
+					makeOffering(karpv1.CapacityTypeSpot, true),
+					makeOffering(karpv1.CapacityTypeReserved, true, withZone("1"), withReservationID("launchable"), withReservationCapacity(5)),
+					fullZone2,
+				)),
+				// The instance type whose only reserved offering is full has no capacity-bearing reserved offering to
+				// launch into, so it is rejected.
+				makeInstanceType("reserved-instance-full-only", withOfferings(
+					makeOffering(karpv1.CapacityTypeOnDemand, true),
+					makeOffering(karpv1.CapacityTypeSpot, true),
+					fullOnly,
+				)),
+			})
+			expectInstanceTypes(kept, "reserved-instance-mixed-zones")
+			expectInstanceTypes(rejected, "reserved-instance-full-only")
+			Expect(kept[0].Offerings).To(HaveLen(1))
+			Expect(kept[0].Offerings[0].ReservationID()).To(Equal("launchable"))
+		})
 	})
 
 	Context("ExoticInstanceFilter", func() {
