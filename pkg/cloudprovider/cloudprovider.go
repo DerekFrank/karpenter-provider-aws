@@ -324,10 +324,34 @@ func (c *CloudProvider) RepairPolicies() []cloudprovider.RepairPolicy {
 		},
 		// Support Node Monitoring Agent Conditions
 		//
+		// AcceleratedHardwareReady is split by reason: the Node Monitoring Agent emits the GPU XID code in the
+		// condition reason, and different XID families warrant different handling (mirroring MNG's repairRules).
+		// ReasonMatcher is a whole-string (anchored) Go regex over each reason; the wrapping ".*" lets it match an XID
+		// code embedded anywhere in the reason token.
 		{
+			// Reboot-clearable GPU faults (transient XIDs). These are the RebootNode family in the design: once the
+			// core reboot action (kubernetes-sigs/karpenter#3259 + its repair wiring) lands, flip Action to RebootNode
+			// to preserve the scarce GPU instance. Until then they replace on the same 10m confidence delay as today.
 			ConditionType:          "AcceleratedHardwareReady",
 			ConditionStatus:        corev1.ConditionFalse,
+			ReasonMatcher:          `.*XID(46|48|54|62|63|95|109|110|136|140|143|155|156|158).*`,
 			TolerationDuration:     10 * time.Minute,
+			TerminationGracePeriod: lo.ToPtr(10 * time.Minute),
+		},
+		{
+			// Fatal / uncorrectable GPU errors — replace fast, a reboot would only waste time on dead hardware.
+			ConditionType:          "AcceleratedHardwareReady",
+			ConditionStatus:        corev1.ConditionFalse,
+			ReasonMatcher:          `.*XID(64|74|79|119|120).*`,
+			TolerationDuration:     10 * time.Minute,
+			TerminationGracePeriod: lo.ToPtr(10 * time.Minute),
+		},
+		{
+			// Condition-level fallback (empty ReasonMatcher = any reason): an unrecognized GPU fault gets a longer 30m
+			// confidence delay before we replace, since we can't attribute it to a known reboot/replace family.
+			ConditionType:          "AcceleratedHardwareReady",
+			ConditionStatus:        corev1.ConditionFalse,
+			TolerationDuration:     30 * time.Minute,
 			TerminationGracePeriod: lo.ToPtr(10 * time.Minute),
 		},
 		{
