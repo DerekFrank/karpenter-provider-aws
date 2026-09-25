@@ -99,6 +99,15 @@ func (c *CloudProvider) RepairPolicies() []corecloudprovider.RepairPolicy {
 	return []corecloudprovider.RepairPolicy{}
 }
 
+func (c *CloudProvider) RepairTiming() corecloudprovider.RepairTiming {
+	return corecloudprovider.RepairTiming{
+		Dwell:           5 * time.Minute,
+		CooldownFloor:   1 * time.Minute,
+		CooldownCeiling: 10 * time.Minute,
+		ClawbackWindow:  20 * time.Minute,
+	}
+}
+
 // GenerateDefaultPriceOutput generates default output that can be set on the pricing provider
 // if a test needs pricing data and is just using the default instance types
 func GenerateDefaultPriceOutput() (*ec2.DescribeSpotPriceHistoryOutput, *pricing.GetProductsOutput) {
