@@ -17,9 +17,11 @@ limitations under the License.
 package cloudprovider
 
 import (
+	"regexp"
 	"testing"
 	"time"
 
+	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 )
@@ -51,6 +53,54 @@ func TestRepairPolicyDefaults(t *testing.T) {
 	if timing.Dwell != 5*time.Minute || timing.CooldownFloor != 1*time.Minute ||
 		timing.CooldownCeiling != 10*time.Minute || timing.ClawbackWindow != 20*time.Minute {
 		t.Errorf("unexpected RepairTiming: %+v", timing)
+	}
+}
+
+// TestAcceleratedHardwareReasonMatching verifies the reason-aware split on AcceleratedHardwareReady: known GPU XID
+// families match their policies (10m confidence delay) while an unrecognized reason only matches the empty-matcher
+// fallback (30m). Matching mirrors core's whole-string anchoring (^(?:pattern)$).
+func TestAcceleratedHardwareReasonMatching(t *testing.T) {
+	policies := (&CloudProvider{}).RepairPolicies()
+	ahr := lo.Filter(policies, func(p cloudprovider.RepairPolicy, _ int) bool {
+		return p.ConditionType == "AcceleratedHardwareReady" && p.ConditionStatus == corev1.ConditionFalse
+	})
+
+	// Exactly one condition-level fallback (empty ReasonMatcher), and it uses the longer 30m delay.
+	fallbacks := lo.Filter(ahr, func(p cloudprovider.RepairPolicy, _ int) bool { return p.ReasonMatcher == "" })
+	if len(fallbacks) != 1 {
+		t.Fatalf("expected exactly one empty-ReasonMatcher fallback for AcceleratedHardwareReady, got %d", len(fallbacks))
+	}
+	if fallbacks[0].TolerationDuration != 30*time.Minute {
+		t.Errorf("AcceleratedHardwareReady fallback toleration = %s, want 30m", fallbacks[0].TolerationDuration)
+	}
+
+	// matchedToleration returns the toleration of the most specific (non-empty matcher first) policy that matches the
+	// reason, or -1 if only the fallback matches / nothing matches.
+	matchedSpecific := func(reason string) (time.Duration, bool) {
+		for _, p := range ahr {
+			if p.ReasonMatcher == "" {
+				continue
+			}
+			if regexp.MustCompile("^(?:" + p.ReasonMatcher + ")$").MatchString(reason) {
+				return p.TolerationDuration, true
+			}
+		}
+		return 0, false
+	}
+
+	for _, reason := range []string{"XID48", "GPU-XID140-fault", "XID64", "XID119"} {
+		if tol, ok := matchedSpecific(reason); !ok {
+			t.Errorf("reason %q matched no XID-family policy; it would only get the 30m fallback", reason)
+		} else if tol != 10*time.Minute {
+			t.Errorf("reason %q: XID-family toleration = %s, want 10m", reason, tol)
+		}
+	}
+	// An unrecognized reason (and the healthy/DCGM advisory codes we intentionally don't enumerate) must NOT match a
+	// fast XID policy — it falls through to the 30m fallback.
+	for _, reason := range []string{"SomeUnknownReason", "DCGM_FI_DEV_XID_ERRORS", "XID13"} {
+		if _, ok := matchedSpecific(reason); ok {
+			t.Errorf("reason %q unexpectedly matched a fast XID-family policy", reason)
+		}
 	}
 }
 
