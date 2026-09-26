@@ -309,38 +309,50 @@ func (c *CloudProvider) RepairPolicies() []cloudprovider.RepairPolicy {
 			ConditionType:      corev1.NodeReady,
 			ConditionStatus:    corev1.ConditionFalse,
 			TolerationDuration: 30 * time.Minute,
+			// Kubelet is reporting NotReady but is still alive, so a bounded graceful drain can honor PDBs. The bound
+			// exists so repair is never the unbounded (~19-day) drain hang that a nil NodeClaim TerminationGracePeriod
+			// would otherwise permit.
+			TerminationGracePeriod: lo.ToPtr(10 * time.Minute),
 		},
 		{
 			ConditionType:      corev1.NodeReady,
 			ConditionStatus:    corev1.ConditionUnknown,
 			TolerationDuration: 30 * time.Minute,
+			// Ready=Unknown is a lost kubelet heartbeat: the node is unreachable, so a drain cannot complete. Repair
+			// forcefully (skip the drain) rather than waiting out a grace period that can never make progress.
+			TerminationGracePeriod: lo.ToPtr(time.Duration(0)),
 		},
 		// Support Node Monitoring Agent Conditions
 		//
 		{
-			ConditionType:      "AcceleratedHardwareReady",
-			ConditionStatus:    corev1.ConditionFalse,
-			TolerationDuration: 10 * time.Minute,
+			ConditionType:          "AcceleratedHardwareReady",
+			ConditionStatus:        corev1.ConditionFalse,
+			TolerationDuration:     10 * time.Minute,
+			TerminationGracePeriod: lo.ToPtr(10 * time.Minute),
 		},
 		{
-			ConditionType:      "StorageReady",
-			ConditionStatus:    corev1.ConditionFalse,
-			TolerationDuration: 30 * time.Minute,
+			ConditionType:          "StorageReady",
+			ConditionStatus:        corev1.ConditionFalse,
+			TolerationDuration:     30 * time.Minute,
+			TerminationGracePeriod: lo.ToPtr(10 * time.Minute),
 		},
 		{
-			ConditionType:      "NetworkingReady",
-			ConditionStatus:    corev1.ConditionFalse,
-			TolerationDuration: 30 * time.Minute,
+			ConditionType:          "NetworkingReady",
+			ConditionStatus:        corev1.ConditionFalse,
+			TolerationDuration:     30 * time.Minute,
+			TerminationGracePeriod: lo.ToPtr(10 * time.Minute),
 		},
 		{
-			ConditionType:      "KernelReady",
-			ConditionStatus:    corev1.ConditionFalse,
-			TolerationDuration: 30 * time.Minute,
+			ConditionType:          "KernelReady",
+			ConditionStatus:        corev1.ConditionFalse,
+			TolerationDuration:     30 * time.Minute,
+			TerminationGracePeriod: lo.ToPtr(10 * time.Minute),
 		},
 		{
-			ConditionType:      "ContainerRuntimeReady",
-			ConditionStatus:    corev1.ConditionFalse,
-			TolerationDuration: 30 * time.Minute,
+			ConditionType:          "ContainerRuntimeReady",
+			ConditionStatus:        corev1.ConditionFalse,
+			TolerationDuration:     30 * time.Minute,
+			TerminationGracePeriod: lo.ToPtr(10 * time.Minute),
 		},
 	}
 }
