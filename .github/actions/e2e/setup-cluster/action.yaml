@@ -226,6 +226,15 @@ runs:
       else
         eksctl ${cmd} cluster -f clusterconfig.yaml
       fi
+
+      # `eksctl upgrade cluster` only changes the control plane version. Apply the zonal shift and Karpenter pod identity
+      # settings too, so a cluster created from an older git ref (E2E Upgrade) matches what this ref's Karpenter expects.
+      if [[ $cmd == 'upgrade' ]]; then
+        eksctl utils update-zonal-shift-config -f clusterconfig.yaml
+        if [[ $PRIVATE_CLUSTER != 'true' ]]; then
+          eksctl update podidentityassociation -f clusterconfig.yaml
+        fi
+      fi
   - name: tag oidc provider of the cluster
     if: always()
     shell: bash
