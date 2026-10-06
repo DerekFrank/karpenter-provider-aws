@@ -51,6 +51,7 @@ import (
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	corecloudprovider "sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/controllers/dynamicresources/deviceallocation"
+	"sigs.k8s.io/karpenter/pkg/controllers/node/health"
 	"sigs.k8s.io/karpenter/pkg/controllers/provisioning"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
 	"sigs.k8s.io/karpenter/pkg/events"
@@ -1647,3 +1648,15 @@ func ExpectLaunchTemplateNetworkInterfaces(ltInput *ec2.CreateLaunchTemplateInpu
 		Expect(lo.FromPtr(actualNetworkInterface.InterfaceType)).To(Equal(string(lo.FromPtr(expected).InterfaceType)))
 	}
 }
+
+var _ = Describe("RepairPolicies", func() {
+	It("should define a policy set that core node repair accepts", func() {
+		// Core panics at startup when NodeRepair is enabled and the provider's policy set fails validation.
+		_, err := health.NewRepairPolicyMatcher(cloudProvider.RepairPolicies(), sets.New(corecloudprovider.ReplaceNode))
+		Expect(err).ToNot(HaveOccurred())
+	})
+	It("should not support reboot", func() {
+		err := cloudProvider.Reboot(ctx, &karpv1.NodeClaim{}, "operation-id")
+		Expect(corecloudprovider.IsNodeRebootNotImplementedError(err)).To(BeTrue())
+	})
+})
