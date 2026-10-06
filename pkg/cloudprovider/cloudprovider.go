@@ -309,42 +309,58 @@ func (c *CloudProvider) GetSupportedNodeClasses() []status.Object {
 func (c *CloudProvider) RepairPolicies() []cloudprovider.RepairPolicy {
 	return []cloudprovider.RepairPolicy{
 		// Supported Kubelet Node Conditions
+		//
+		// Ready=False is the policy set's single default fallback (empty ReasonRegex). Every other policy matches all
+		// reasons, so the fallback only ever applies to Ready=False.
 		{
 			ConditionType:      corev1.NodeReady,
 			ConditionStatus:    corev1.ConditionFalse,
 			TolerationDuration: 30 * time.Minute,
+			Action:             cloudprovider.ReplaceNode,
 		},
 		{
 			ConditionType:      corev1.NodeReady,
 			ConditionStatus:    corev1.ConditionUnknown,
+			ReasonRegex:        ".*",
 			TolerationDuration: 30 * time.Minute,
+			Action:             cloudprovider.ReplaceNode,
 		},
 		// Support Node Monitoring Agent Conditions
 		//
 		{
 			ConditionType:      "AcceleratedHardwareReady",
 			ConditionStatus:    corev1.ConditionFalse,
+			ReasonRegex:        ".*",
 			TolerationDuration: 10 * time.Minute,
+			Action:             cloudprovider.ReplaceNode,
 		},
 		{
 			ConditionType:      "StorageReady",
 			ConditionStatus:    corev1.ConditionFalse,
+			ReasonRegex:        ".*",
 			TolerationDuration: 30 * time.Minute,
+			Action:             cloudprovider.ReplaceNode,
 		},
 		{
 			ConditionType:      "NetworkingReady",
 			ConditionStatus:    corev1.ConditionFalse,
+			ReasonRegex:        ".*",
 			TolerationDuration: 30 * time.Minute,
+			Action:             cloudprovider.ReplaceNode,
 		},
 		{
 			ConditionType:      "KernelReady",
 			ConditionStatus:    corev1.ConditionFalse,
+			ReasonRegex:        ".*",
 			TolerationDuration: 30 * time.Minute,
+			Action:             cloudprovider.ReplaceNode,
 		},
 		{
 			ConditionType:      "ContainerRuntimeReady",
 			ConditionStatus:    corev1.ConditionFalse,
+			ReasonRegex:        ".*",
 			TolerationDuration: 30 * time.Minute,
+			Action:             cloudprovider.ReplaceNode,
 		},
 	}
 }
