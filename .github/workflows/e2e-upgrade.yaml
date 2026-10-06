@@ -64,7 +64,6 @@ jobs:
     name: suite-upgrade
     runs-on: ubuntu-latest
     steps:
-      # This additional checkout can be removed when the commit status action is added to the from_git_ref version of Karpenter
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.to_git_ref }}
@@ -90,9 +89,6 @@ jobs:
           fi
           echo "Upgrading from \"$FROM_GIT_REF\""
           echo FROM_GIT_REF="$FROM_GIT_REF" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ steps.resolve-from-git-ref.outputs.FROM_GIT_REF }}
       - name: configure aws credentials
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
@@ -115,7 +111,10 @@ jobs:
           k8s_version: ${{ inputs.k8s_version }}
           eksctl_version: v0.202.0
           ip_family: IPv4 # Set the value to IPv6 if IPv6 suite, else IPv4
-          git_ref: ${{ steps.resolve-from-git-ref.outputs.FROM_GIT_REF }}
+          # Build the cluster with this ref's eksctl config and IAM so it already has what the upgraded Karpenter needs
+          # (e.g. zonal shift), and only install Karpenter from the from-ref
+          git_ref: ${{ inputs.to_git_ref }}
+          karpenter_git_ref: ${{ steps.resolve-from-git-ref.outputs.FROM_GIT_REF }}
           ecr_account_id: ${{ vars.SNAPSHOT_ACCOUNT_ID }}
           ecr_region: ${{ vars.SNAPSHOT_REGION }}
           prometheus_workspace_id: ${{ vars.WORKSPACE_ID }}
