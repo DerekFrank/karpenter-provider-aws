@@ -54,22 +54,23 @@ Karpenter surfaces environment variables and CLI parameters to allow you to conf
 
 ### Feature Gates
 
-Karpenter uses [feature gates](https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/#feature-gates-for-alpha-or-beta-features) You can enable the feature gates through the `--feature-gates` CLI environment variable or the `FEATURE_GATES` environment variable in the Karpenter deployment. For example, you can configure drift, spotToSpotConsolidation by setting the CLI argument: `--feature-gates Drift=true,SpotToSpotConsolidation=true,ReservedCapacity=true`.
+Karpenter uses [feature gates](https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/#feature-gates-for-alpha-or-beta-features) You can enable the feature gates through the `--feature-gates` CLI environment variable or the `FEATURE_GATES` environment variable in the Karpenter deployment. For example, you can enable node repair and spot-to-spot consolidation by setting the CLI argument: `--feature-gates NodeRepair=true,SpotToSpotConsolidation=true`.
 
-| Feature                 | Default | Stage  | Since   | Until   |
-|-------------------------|---------|--------|---------|---------|
-| Drift                   | false   | Alpha  | v0.21.x | v0.32.x |
-| Drift                   | true    | Beta   | v0.33.x | v0.37.x |
-| SpotToSpotConsolidation | false   | Alpha  | v0.34.x |         |
-| NodeRepair              | false   | Alpha  | v1.1.x  |         |
-| ReservedCapacity        | false   | Alpha  | v1.3.x  | v1.5.x  |
-| ReservedCapacity        | true    | Beta   | v1.6.x  |         |
-| NodeOverlay             | false   | Alpha  | v1.7.x  |         |
-| StaticCapacity          | false   | Alpha  | v1.8.x  |         |
-| CapacityBuffer          | false   | Alpha  | v1.13.x |         |
-| TerminateFirstDrift     | false   | Alpha  | v1.15.x |         |
-| TerminateFirstRepair    | false   | Alpha  | v1.15.x |         |
-| PodDeletionCostManagement | false | Alpha  | v1.15.x |         |
+[comment]: <> (the core feature gates below are generated from hack/docs/featuregates_gen/main.go)
+
+| Feature | Default | Stage | Description |
+|---------|---------|-------|-------------|
+| NodeRepair | false | Alpha | Enables node repair. Karpenter replaces nodes with an unhealthy condition matching one of the cloud provider's repair policies, subject to disruption budgets. |
+| ReservedCapacity | true | Beta | Enables capacity reservations. Karpenter can launch nodes into reserved capacity, and prefers it over on-demand and spot capacity. |
+| SpotToSpotConsolidation | false | Alpha | Enables spot-to-spot consolidation. Karpenter can replace spot nodes with cheaper spot nodes. |
+| NodeOverlay | false | Alpha | Enables the NodeOverlay API. Karpenter applies NodeOverlay price and capacity adjustments to instance types when scheduling. |
+| StaticCapacity | false | Alpha | Enables static NodePools. Karpenter keeps NodePools that set spec.replicas at that number of nodes, regardless of pod demand. |
+| CapacityBuffer | false | Alpha | Enables the CapacityBuffer API (autoscaling.x-k8s.io). Karpenter provisions and keeps the spare capacity CapacityBuffers describe. |
+| TerminateFirstDrift | false | Alpha | Karpenter terminates a drifted node before its replacement is ready when it can't launch the replacement first, e.g. for a full capacity reservation or a static NodePool at its node limit. |
+| TerminateFirstRepair | false | Alpha | Karpenter terminates an unhealthy node before its replacement is ready when it can't launch the replacement first. Requires NodeRepair. |
+| PodDeletionCostManagement | false | Alpha | Karpenter sets controller.kubernetes.io/pod-deletion-cost on pods so ReplicaSet scale-down prefers nodes it plans to consolidate, and stops reading that annotation as a disruption cost. |
+
+[comment]: <> (end core feature gates generated from hack/docs/featuregates_gen/main.go)
 
 {{% alert title="Note" color="primary" %}}
 In v1, drift has been promoted to stable and the feature gate removed. Users can continue to control drift by using disruption budgets by reason.
@@ -101,9 +102,13 @@ spec:
 
 Some features are specific to the AWS provider and are configured separately from the core Karpenter feature gates above. These are enabled through the `--aws-feature-gates` CLI flag or the `AWS_FEATURE_GATES` environment variable in the Karpenter deployment (Helm: `settings.awsFeatureGates`). For example: `--aws-feature-gates NodeClassCEL=true`.
 
-| Feature      | Default | Stage | Since    | Until |
-|--------------|---------|-------|----------|-------|
-| NodeClassCEL | false   | Alpha | v1.15.x  |       |
+[comment]: <> (the AWS feature gates below are generated from hack/docs/featuregates_gen/main.go)
+
+| Feature | Default | Stage | Description |
+|---------|---------|-------|-------------|
+| NodeClassCEL | false | Alpha | Enables CEL expressions in an EC2NodeClass's spec.kubelet, so maxPods, kubeReserved, and systemReserved can be set per instance type. |
+
+[comment]: <> (end AWS feature gates generated from hack/docs/featuregates_gen/main.go)
 
 `NodeClassCEL` enables [CEL expression support in `spec.kubelet`]({{<ref "../concepts/nodeclasses#dynamic-kubelet-configuration-via-expressions" >}}), allowing `maxPods`, `kubeReserved`, and `systemReserved` to be configured as per-instance-type expressions.
 

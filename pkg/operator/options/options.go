@@ -20,8 +20,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/awslabs/operatorpkg/docs"
+	"github.com/samber/lo"
 	cliflag "k8s.io/component-base/cli/flag"
 	coreoptions "sigs.k8s.io/karpenter/pkg/operator/options"
 	"sigs.k8s.io/karpenter/pkg/utils/env"
@@ -39,6 +42,19 @@ type FeatureGates struct {
 	inputStr string
 
 	NodeClassCEL bool
+}
+
+var NodeClassCELFeatureGate = coreoptions.FeatureGate{
+	Name:    "NodeClassCEL",
+	Default: false,
+	Stage:   docs.Alpha,
+	Help: "Enables CEL expressions in an EC2NodeClass's spec.kubelet, so maxPods, kubeReserved, and systemReserved " +
+		"can be set per instance type.",
+}
+
+// AWSFeatureGates are the AWS-specific feature gates, in the order --aws-feature-gates lists them.
+var AWSFeatureGates = []coreoptions.FeatureGate{
+	NodeClassCELFeatureGate,
 }
 
 type Options struct {
@@ -72,7 +88,7 @@ func (o *Options) AddFlags(fs *coreoptions.FlagSet) {
 	fs.DurationVar(&o.AMIRefreshInterval, "ami-refresh-interval", env.WithDefaultDuration("AMI_REFRESH_INTERVAL", time.Minute), "How often Karpenter refreshes AMI data from EC2. Increasing this value will reduce the number of DescribeImages API calls at the cost of increased staleness in AMI discovery and drift detection. Must be at least 1m.")
 	fs.DurationVar(&o.SubnetRefreshInterval, "subnet-refresh-interval", env.WithDefaultDuration("SUBNET_REFRESH_INTERVAL", time.Minute), "How often Karpenter refreshes subnet data from EC2. Increasing this value will reduce the number of DescribeSubnets API calls at the cost of increased staleness in subnet discovery. Must be at least 1m.")
 	fs.DurationVar(&o.SecurityGroupRefreshInterval, "security-group-refresh-interval", env.WithDefaultDuration("SECURITY_GROUP_REFRESH_INTERVAL", time.Minute), "How often Karpenter refreshes security group data from EC2. Increasing this value will reduce the number of DescribeSecurityGroups API calls at the cost of increased staleness in security group discovery. Must be at least 1m.")
-	fs.StringVar(&o.FeatureGates.inputStr, "aws-feature-gates", env.WithDefaultString("AWS_FEATURE_GATES", "NodeClassCEL=false"), "Optional AWS-specific features can be enabled / disabled using feature gates. Current options are: NodeClassCEL.")
+	fs.StringVar(&o.FeatureGates.inputStr, "aws-feature-gates", env.WithDefaultString("AWS_FEATURE_GATES", featureGatesDefault()), featureGatesHelp())
 }
 
 func (o *Options) Parse(fs *coreoptions.FlagSet, args ...string) error {
@@ -95,7 +111,7 @@ func (o *Options) Parse(fs *coreoptions.FlagSet, args ...string) error {
 
 func DefaultFeatureGates() FeatureGates {
 	return FeatureGates{
-		NodeClassCEL: false,
+		NodeClassCEL: NodeClassCELFeatureGate.Default,
 	}
 }
 
@@ -108,11 +124,23 @@ func ParseFeatureGates(gateStr string) (FeatureGates, error) {
 	if err := cliflag.NewMapStringBool(&gateMap).Set(gateStr); err != nil {
 		return gates, err
 	}
-	if val, ok := gateMap["NodeClassCEL"]; ok {
+	if val, ok := gateMap[NodeClassCELFeatureGate.Name]; ok {
 		gates.NodeClassCEL = val
 	}
 
 	return gates, nil
+}
+
+// featureGatesDefault is the default --aws-feature-gates value, e.g. "NodeClassCEL=false".
+func featureGatesDefault() string {
+	return strings.Join(lo.Map(AWSFeatureGates, func(g coreoptions.FeatureGate, _ int) string {
+		return fmt.Sprintf("%s=%t", g.Name, g.Default)
+	}), ",")
+}
+
+func featureGatesHelp() string {
+	return fmt.Sprintf("Optional AWS-specific features can be enabled / disabled using feature gates. Current options are: %s.",
+		strings.Join(lo.Map(AWSFeatureGates, func(g coreoptions.FeatureGate, _ int) string { return g.Name }), ", "))
 }
 
 func (o *Options) ToContext(ctx context.Context) context.Context {
