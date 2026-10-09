@@ -227,6 +227,14 @@ Use [PodDisruptionBudgets](https://kubernetes.io/docs/tasks/run-application/conf
 Karpenter assumes that it can relaunch into the slot the terminated node frees. Anything else that launches into the same capacity reservation can claim the freed slot first, for example another Karpenter installation, an Auto Scaling group, or a manual launch. With an `open` reservation, any matching instance launched in the account can consume the slot. The node's pods then stay pending until capacity frees up in the reservation, which can cause an unbounded availability outage. Don't enable terminate-first disruption unless this Karpenter installation is the only thing that launches into its capacity reservations.
 {{% /alert %}}
 
+{{% alert title="Known Issue" color="warning" %}}
+Karpenter doesn't check whether a [static NodePool]({{<ref "./nodepools#specreplicas" >}}) (`StaticCapacity` feature gate) can launch a replacement when the NodePool's requirements only allow `reserved` capacity (`karpenter.sh/capacity-type In [reserved]`):
+* **Full reservation, below `limits.nodes`:** Karpenter keeps pre-spinning replacements that can't launch, so drifted or unhealthy nodes are never replaced. Terminate-first disruption doesn't apply, because the NodePool is below its limit.
+* **Reservation no longer available, at `limits.nodes`:** With `TerminateFirstDrift` or `TerminateFirstRepair` enabled, if the reservation expires, is cancelled, or is no longer selected by the EC2NodeClass, Karpenter still terminates the NodePool's nodes first. Their replacements can't launch, so the NodePool loses those nodes and Karpenter repeatedly creates NodeClaims that fail to launch until a matching reservation is available.
+
+To avoid both, allow `on-demand` in the requirements of static NodePools that use capacity reservations, so replacements can fall back to on-demand capacity. Leaving `TerminateFirstDrift` and `TerminateFirstRepair` disabled avoids only the second case.
+{{% /alert %}}
+
 ### Node Auto Repair
 
 <i class="fa-solid fa-circle-info"></i> <b>Feature State: </b> Karpenter v1.1.0 [alpha]({{<ref "../reference/settings#feature-gates" >}})
