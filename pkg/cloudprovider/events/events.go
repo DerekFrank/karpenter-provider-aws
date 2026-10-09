@@ -61,3 +61,15 @@ func NodePoolZonalShiftCleared(nodePool *karpv1.NodePool, zoneName, zoneID strin
 		DedupeValues:   []string{string(nodePool.UID), zoneID},
 	}
 }
+
+// NodeClaimTerminationDeferredByZonalShift is emitted when instance termination is skipped because the instance is in
+// a zone that is shifted away from. Termination is retried once the shift ends.
+func NodeClaimTerminationDeferredByZonalShift(nodeClaim *karpv1.NodeClaim, zoneName, zoneID string) events.Event {
+	return events.Event{
+		InvolvedObject: nodeClaim,
+		Type:           corev1.EventTypeWarning,
+		Reason:         "TerminationDeferredByZonalShift",
+		Message:        fmt.Sprintf("Instance termination deferred until the zonal shift away from zone %s (%s) ends", zoneName, zoneID),
+		DedupeValues:   []string{string(nodeClaim.UID), zoneID},
+	}
+}

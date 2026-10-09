@@ -33,6 +33,7 @@ import (
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/events"
 	karpoptions "sigs.k8s.io/karpenter/pkg/operator/options"
+	"sigs.k8s.io/karpenter/pkg/utils/pretty"
 	"sigs.k8s.io/karpenter/pkg/utils/resources"
 
 	"github.com/aws/karpenter-provider-aws/pkg/apis"
@@ -71,6 +72,7 @@ type CloudProvider struct {
 	placementGroupProvider      placementgroup.Provider
 	instanceTypeStore           *nodeoverlay.InstanceTypeStore
 	caBundle                    *string
+	zonalShiftMonitor           *pretty.ChangeMonitor
 }
 
 func New(
@@ -96,6 +98,7 @@ func New(
 		recorder:                    recorder,
 		instanceTypeStore:           store,
 		caBundle:                    caBundle,
+		zonalShiftMonitor:           pretty.NewChangeMonitor(),
 	}
 }
 
@@ -254,6 +257,16 @@ func (c *CloudProvider) Delete(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	}
 	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues("id", id))
 	err = c.instanceProvider.Delete(ctx, id)
+	// TerminateInstances is deliberately skipped during a zonal shift. Report success so the caller keeps
+	// requeueing (and retries once the shift ends) instead of logging an error and backing off on every attempt.
+	var zse *instance.ZonalShiftError
+	if stderrors.As(err, &zse) {
+		if c.zonalShiftMonitor.HasChanged(string(nodeClaim.UID), zse.ZoneID) {
+			log.FromContext(ctx).WithValues("zone", zse.Zone, "zone-id", zse.ZoneID).Info("deferring instance termination until the zonal shift ends")
+		}
+		c.recorder.Publish(cloudproviderevents.NodeClaimTerminationDeferredByZonalShift(nodeClaim, zse.Zone, zse.ZoneID))
+		return nil
+	}
 	if id := nodeClaim.Labels[cloudprovider.ReservationIDLabel]; id != "" && cloudprovider.IsNodeClaimNotFoundError(err) {
 		c.capacityReservationProvider.MarkTerminated(id)
 	}

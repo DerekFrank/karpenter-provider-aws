@@ -119,9 +119,11 @@ func (h *InterruptionHandler) handleNodeClaim(ctx context.Context, msg messages.
 		if err := h.annotateTerminationTimestamp(ctx, nodeClaim); err != nil {
 			return err
 		}
-		return h.deleteNodeClaim(ctx, msg, nodeClaim, node)
+		// The termination timestamp is now, so pods are force-deleted regardless of the NodeClaim's
+		// terminationGracePeriod; report that rather than the TGP-derived mode.
+		return h.deleteNodeClaim(ctx, msg, nodeClaim, node, metrics.TerminationModeForceful)
 	case CordonAndDrain:
-		return h.deleteNodeClaim(ctx, msg, nodeClaim, node)
+		return h.deleteNodeClaim(ctx, msg, nodeClaim, node, nodeclaimutils.DisruptionTerminationMode(nodeClaim))
 	default:
 		return nil
 	}
@@ -154,7 +156,7 @@ func (h *InterruptionHandler) markUnavailableOfferings(ctx context.Context, msg 
 }
 
 // deleteNodeClaim removes the NodeClaim from the api-server
-func (h *InterruptionHandler) deleteNodeClaim(ctx context.Context, msg messages.Message, nodeClaim *karpv1.NodeClaim, node *corev1.Node) error {
+func (h *InterruptionHandler) deleteNodeClaim(ctx context.Context, msg messages.Message, nodeClaim *karpv1.NodeClaim, node *corev1.Node, terminationMode string) error {
 	if !nodeClaim.DeletionTimestamp.IsZero() {
 		return nil
 	}
@@ -170,7 +172,7 @@ func (h *InterruptionHandler) deleteNodeClaim(ctx context.Context, msg messages.
 		// Interruption isn't consolidation, so there's no consolidation policy to report - the same as the
 		// core health controller reports when it deletes an unhealthy node.
 		metrics.ConsolidationPolicyLabel: "",
-		metrics.TerminationModeLabel:     nodeclaimutils.DisruptionTerminationMode(nodeClaim),
+		metrics.TerminationModeLabel:     terminationMode,
 	})
 	return nil
 }

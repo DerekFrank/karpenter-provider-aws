@@ -265,6 +265,14 @@ func (p *DefaultProvider) List(ctx context.Context) ([]*Instance, error) {
 	return lo.Values(instances), cloudprovider.IgnoreNodeClaimNotFoundError(err)
 }
 
+// ZonalShiftError is returned when an operation is intentionally skipped because the instance is in a
+// zonally shifted availability zone.
+type ZonalShiftError struct {
+	error
+	Zone   string
+	ZoneID string
+}
+
 func (p *DefaultProvider) Delete(ctx context.Context, id string) error {
 	out, err := p.Get(ctx, id, SkipCache)
 	if err != nil {
@@ -273,7 +281,11 @@ func (p *DefaultProvider) Delete(ctx context.Context, id string) error {
 	// During a zonal shift, Get() returns cached data without calling DescribeInstances.
 	// We also skip TerminateInstances to avoid retry storms against the impaired AZ.
 	if out.ZoneID != "" && p.zonalshiftProvider.IsZonalShifted(ctx, out.ZoneID) {
-		return fmt.Errorf("instance %s is in zonally shifted availability zone %s (%s), skipping termination", id, out.Zone, out.ZoneID)
+		return &ZonalShiftError{
+			error:  fmt.Errorf("instance %s is in zonally shifted availability zone %s (%s), skipping termination", id, out.Zone, out.ZoneID),
+			Zone:   out.Zone,
+			ZoneID: out.ZoneID,
+		}
 	}
 	// Check if the instance is already shutting-down to reduce the number of terminate-instance calls we make thereby
 	// reducing our overall QPS. Due to EC2's eventual consistency model, the result of the terminate-instance or

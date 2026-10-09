@@ -178,8 +178,9 @@ var _ = Describe("InterruptionHandling", func() {
 
 			ExpectSingletonReconciled(ctx, controller)
 			ExpectMetricCounterValue(metrics.NodeClaimsDisruptedTotal, 1, map[string]string{
-				metrics.ReasonLabel: "scheduled_change",
-				"nodepool":          "default",
+				metrics.ReasonLabel:          "scheduled_change",
+				"nodepool":                   "default",
+				metrics.TerminationModeLabel: metrics.TerminationModeGraceful,
 			})
 			Expect(sqsapi.ReceiveMessageBehavior.SuccessfulCalls()).To(Equal(1))
 			ExpectNotFound(ctx, env.Client, nodeClaim)
@@ -358,8 +359,9 @@ var _ = Describe("InterruptionHandling", func() {
 			ExpectApplied(ctx, env.Client, nodeClaim, node)
 			ExpectSingletonReconciled(ctx, instanceStatusController)
 			ExpectMetricCounterValue(metrics.NodeClaimsDisruptedTotal, 1, map[string]string{
-				metrics.ReasonLabel: "system_status",
-				"nodepool":          "default",
+				metrics.ReasonLabel:          "system_status",
+				"nodepool":                   "default",
+				metrics.TerminationModeLabel: metrics.TerminationModeForceful,
 			})
 			ExpectMetricCounterValue(interruption.InstanceStatusUnhealthy, 1, map[string]string{
 				"category": "SystemStatus",
@@ -389,8 +391,9 @@ var _ = Describe("InterruptionHandling", func() {
 			ExpectApplied(ctx, env.Client, nodeClaim, node)
 			ExpectSingletonReconciled(ctx, instanceStatusController)
 			ExpectMetricCounterValue(metrics.NodeClaimsDisruptedTotal, 1, map[string]string{
-				metrics.ReasonLabel: "instance_status",
-				"nodepool":          "default",
+				metrics.ReasonLabel:          "instance_status",
+				"nodepool":                   "default",
+				metrics.TerminationModeLabel: metrics.TerminationModeForceful,
 			})
 			ExpectMetricCounterValue(interruption.InstanceStatusUnhealthy, 1, map[string]string{
 				"category": "InstanceStatus",
@@ -536,8 +539,9 @@ var _ = Describe("InterruptionHandling", func() {
 			ExpectApplied(ctx, env.Client, nodeClaim, node)
 			ExpectSingletonReconciled(ctx, instanceStatusController)
 			ExpectMetricCounterValue(metrics.NodeClaimsDisruptedTotal, 1, map[string]string{
-				metrics.ReasonLabel: "event_status",
-				"nodepool":          "default",
+				metrics.ReasonLabel:          "event_status",
+				"nodepool":                   "default",
+				metrics.TerminationModeLabel: metrics.TerminationModeGraceful,
 			})
 			ExpectMetricCounterValue(interruption.InstanceStatusUnhealthy, 1, map[string]string{
 				"category": "EventStatus",

@@ -33,6 +33,8 @@ import (
 	clock "k8s.io/utils/clock/testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/arczonalshift"
+	arczonalshifttypes "github.com/aws/aws-sdk-go-v2/service/arczonalshift/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
@@ -424,6 +426,36 @@ var _ = Describe("CloudProvider", func() {
 			nodeClaim.Status.ProviderID = "not-a-valid-provider-id"
 			Expect(cloudProvider.Reboot(ctx, nodeClaim, "op-1")).ToNot(Succeed())
 			Expect(awsEnv.EC2API.RebootInstancesBehavior.CalledWithInput.Len()).To(Equal(0))
+		})
+	})
+	Context("Delete", func() {
+		It("should defer termination without an error and publish an event during a zonal shift", func() {
+			instance := test.EC2Instance(ec2types.Instance{
+				Placement: &ec2types.Placement{
+					AvailabilityZone:   aws.String("test-zone-1a"),
+					AvailabilityZoneId: aws.String("tstz1-1a"),
+				},
+			})
+			id := aws.ToString(instance.InstanceId)
+			awsEnv.EC2API.Instances.Store(id, instance)
+			nodeClaim.Status.ProviderID = fake.ProviderID(id)
+			awsEnv.ARCZonalShiftAPI.GetManagedResourceBehavior.Output.Set(&arczonalshift.GetManagedResourceOutput{
+				ZonalShifts: []arczonalshifttypes.ZonalShiftInResource{
+					{
+						AwayFrom:      aws.String("tstz1-1a"),
+						ExpiryTime:    aws.Time(time.Now().Add(time.Hour)),
+						AppliedStatus: arczonalshifttypes.AppliedStatusApplied,
+					},
+				},
+			})
+			Expect(awsEnv.ZonalShiftProvider.UpdateZonalShifts(ctx)).To(Succeed())
+
+			eventRecorder := coretest.NewEventRecorder()
+			cp := cloudprovider.New(awsEnv.InstanceTypesProvider, awsEnv.InstanceProvider, eventRecorder,
+				env.Client, awsEnv.AMIProvider, awsEnv.SecurityGroupProvider, awsEnv.CapacityReservationProvider, awsEnv.PlacementGroupProvider, awsEnv.InstanceTypeStore, testCABundle)
+			Expect(cp.Delete(ctx, nodeClaim)).To(Succeed())
+			Expect(awsEnv.EC2API.TerminateInstancesBehavior.CalledWithInput.Len()).To(Equal(0))
+			Expect(eventRecorder.DetectedEvent("Instance termination deferred until the zonal shift away from zone test-zone-1a (tstz1-1a) ends")).To(BeTrue())
 		})
 	})
 	Context("EC2 Context", func() {
