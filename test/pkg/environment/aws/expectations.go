@@ -35,6 +35,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 
+	"github.com/aws/smithy-go"
 	"github.com/samber/lo"
 	"go.uber.org/multierr"
 	appsv1 "k8s.io/api/apps/v1"
@@ -45,7 +46,6 @@ import (
 	coretest "sigs.k8s.io/karpenter/pkg/test"
 
 	awserrors "github.com/aws/karpenter-provider-aws/pkg/errors"
-	"github.com/aws/karpenter-provider-aws/pkg/utils"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -600,25 +600,18 @@ func ignoreAlreadyContainsRole(err error) error {
 	return err
 }
 
-func ExpectInterruptibleCapacityReservationCreated(
+// ExpectInterruptibleCapacityAllocationCreated allocates interruptible capacity from the source reservation and returns the
+// ID of the resulting interruptible reservation.
+func ExpectInterruptibleCapacityAllocationCreated(
 	ctx context.Context,
 	ec2api *ec2.Client,
-	instanceType ec2types.InstanceType,
-	zone string,
-	totalCapacity int32,
+	sourceReservationID string,
 	interruptibleCapacity int32,
-	tags map[string]string,
-) (string, string) {
+) string {
 	GinkgoHelper()
-	odcrID := ExpectCapacityReservationCreated(ctx, ec2api, instanceType, zone, totalCapacity, nil, tags)
-
 	_, err := ec2api.CreateInterruptibleCapacityReservationAllocation(ctx, &ec2.CreateInterruptibleCapacityReservationAllocationInput{
-		CapacityReservationId: &odcrID,
+		CapacityReservationId: &sourceReservationID,
 		InstanceCount:         lo.ToPtr(interruptibleCapacity),
-		TagSpecifications: lo.Ternary(len(tags) != 0, []ec2types.TagSpecification{{
-			ResourceType: ec2types.ResourceTypeCapacityReservation,
-			Tags:         utils.EC2MergeTags(tags),
-		}}, nil),
 	})
 	Expect(err).ToNot(HaveOccurred())
 
@@ -626,7 +619,7 @@ func ExpectInterruptibleCapacityReservationCreated(
 	var out *ec2.DescribeCapacityReservationsOutput
 	Eventually(func(g Gomega) {
 		out, err = ec2api.DescribeCapacityReservations(ctx, &ec2.DescribeCapacityReservationsInput{
-			CapacityReservationIds: []string{odcrID},
+			CapacityReservationIds: []string{sourceReservationID},
 		})
 		Expect(err).ToNot(HaveOccurred())
 		Expect(out).To(Not(BeNil()))
@@ -634,7 +627,7 @@ func ExpectInterruptibleCapacityReservationCreated(
 		Expect(out.CapacityReservations[0].InterruptibleCapacityAllocation).To(Not(BeNil()))
 	}).WithTimeout(15 * time.Second).WithPolling(2 * time.Second).Should(Succeed())
 
-	return odcrID, *out.CapacityReservations[0].InterruptibleCapacityAllocation.InterruptibleCapacityReservationId
+	return *out.CapacityReservations[0].InterruptibleCapacityAllocation.InterruptibleCapacityReservationId
 }
 
 func ExpectModifyInterruptibleCapacity(
@@ -658,6 +651,10 @@ func ExpectInterruptibleAndSourceCapacityCanceled(
 	interrutibleReservationID string,
 ) {
 	GinkgoHelper()
+	// the reservations were never created if the BeforeAll failed
+	if sourceReservationId == "" {
+		return
+	}
 	_, err := ec2api.UpdateInterruptibleCapacityReservationAllocation(ctx, &ec2.UpdateInterruptibleCapacityReservationAllocationInput{
 		CapacityReservationId: lo.ToPtr(sourceReservationId),
 		TargetInstanceCount:   aws.Int32(0),
@@ -688,35 +685,95 @@ func ExpectInterruptibleAndSourceCapacityCanceled(
 	}).WithTimeout(4 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
 }
 
-func ExpectCapacityReservationCreated(
-	ctx context.Context,
-	ec2api *ec2.Client,
-	instanceType ec2types.InstanceType,
-	zone string,
-	capacity int32,
-	endDate *time.Time,
-	tags map[string]string,
-) string {
+// capacityReservationFamilies are the instance families E2E capacity reservations are drawn from. Each contributes its large
+// and xlarge sizes, and all of them satisfy the default NodePool's requirements.
+var capacityReservationFamilies = []string{
+	"m5", "m5a", "m6i", "m6a", "m7i", "m7a", "m6g", "m7g",
+	"c5", "c6i", "c6a", "c7i", "c7g",
+	"r5", "r6i",
+}
+
+type CapacityReservation struct {
+	ID           string
+	InstanceType string
+	Zone         string
+}
+
+// ExpectCapacityReservationCreated creates a targeted ODCR for a random instance type and zone. Creating an ODCR for any
+// single offering is frequently ICE'd, so offerings are tried in a random order, which also keeps concurrent suites from
+// contending for the same one.
+func (env *Environment) ExpectCapacityReservationCreated(capacity int32) CapacityReservation {
 	GinkgoHelper()
-	out, err := ec2api.CreateCapacityReservation(ctx, &ec2.CreateCapacityReservationInput{
+	var offerings []lo.Tuple2[string, string]
+	for _, family := range capacityReservationFamilies {
+		for _, size := range []string{"large", "xlarge"} {
+			for _, zone := range env.capacityReservationZones() {
+				offerings = append(offerings, lo.T2(fmt.Sprintf("%s.%s", family, size), zone))
+			}
+		}
+	}
+	for _, offering := range lo.Shuffle(offerings) {
+		if cr, ok := env.tryCreateCapacityReservation(offering.A, offering.B, capacity); ok {
+			return cr
+		}
+	}
+	Fail("failed to create a capacity reservation, all offerings had insufficient capacity")
+	return CapacityReservation{}
+}
+
+// ExpectCapacityReservationPairCreated creates ODCRs for the large and xlarge sizes of a random instance family in the same
+// zone, for tests that rely on the large being the cheaper of the two.
+func (env *Environment) ExpectCapacityReservationPairCreated(largeCapacity, xlargeCapacity int32) (CapacityReservation, CapacityReservation) {
+	GinkgoHelper()
+	var offerings []lo.Tuple2[string, string]
+	for _, family := range capacityReservationFamilies {
+		for _, zone := range env.capacityReservationZones() {
+			offerings = append(offerings, lo.T2(family, zone))
+		}
+	}
+	for _, offering := range lo.Shuffle(offerings) {
+		large, ok := env.tryCreateCapacityReservation(offering.A+".large", offering.B, largeCapacity)
+		if !ok {
+			continue
+		}
+		if xlarge, ok := env.tryCreateCapacityReservation(offering.A+".xlarge", offering.B, xlargeCapacity); ok {
+			return large, xlarge
+		}
+		ExpectCapacityReservationsCanceled(env.Context, env.EC2API, large.ID)
+	}
+	Fail("failed to create a pair of capacity reservations, all offerings had insufficient capacity")
+	return CapacityReservation{}, CapacityReservation{}
+}
+
+// capacityReservationZones returns the availability zones covered by the cluster's discovery subnets
+func (env *Environment) capacityReservationZones() []string {
+	return lo.Uniq(lo.FilterMap(env.GetSubnetInfo(map[string]string{"karpenter.sh/discovery": env.ClusterName}), func(s SubnetInfo, _ int) (string, bool) {
+		return s.Zone, s.ZoneType == "availability-zone"
+	}))
+}
+
+// tryCreateCapacityReservation returns false if the offering can't currently be reserved, and fails on any other error
+func (env *Environment) tryCreateCapacityReservation(instanceType, zone string, capacity int32) (CapacityReservation, bool) {
+	GinkgoHelper()
+	out, err := env.EC2API.CreateCapacityReservation(env.Context, &ec2.CreateCapacityReservationInput{
 		InstanceCount:         lo.ToPtr(capacity),
-		InstanceType:          lo.ToPtr(string(instanceType)),
+		InstanceType:          lo.ToPtr(instanceType),
 		InstancePlatform:      ec2types.CapacityReservationInstancePlatformLinuxUnix,
 		AvailabilityZone:      lo.ToPtr(zone),
-		EndDate:               endDate,
 		InstanceMatchCriteria: ec2types.InstanceMatchCriteriaTargeted,
-		TagSpecifications: lo.Ternary(len(tags) != 0, []ec2types.TagSpecification{{
-			ResourceType: ec2types.ResourceTypeCapacityReservation,
-			Tags:         utils.EC2MergeTags(tags),
-		}}, nil),
 	})
+	if apiErr, ok := lo.ErrorsAs[smithy.APIError](err); ok && lo.Contains([]string{"InsufficientInstanceCapacity", "Unsupported"}, apiErr.ErrorCode()) {
+		GinkgoWriter.Printf("Skipping capacity reservation for %s in %s: %s\n", instanceType, zone, apiErr.ErrorCode())
+		return CapacityReservation{}, false
+	}
 	Expect(err).ToNot(HaveOccurred())
-	return *out.CapacityReservation.CapacityReservationId
+	By(fmt.Sprintf("created capacity reservation %s for %s in %s", *out.CapacityReservation.CapacityReservationId, instanceType, zone))
+	return CapacityReservation{ID: *out.CapacityReservation.CapacityReservationId, InstanceType: instanceType, Zone: zone}, true
 }
 
 func ExpectCapacityReservationsCanceled(ctx context.Context, ec2api *ec2.Client, reservationIDs ...string) {
 	GinkgoHelper()
-	for _, id := range reservationIDs {
+	for _, id := range lo.Compact(reservationIDs) {
 		_, err := ec2api.CancelCapacityReservation(ctx, &ec2.CancelCapacityReservationInput{
 			CapacityReservationId: &id,
 		})
