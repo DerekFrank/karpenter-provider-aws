@@ -31,12 +31,17 @@ runs:
       with:
         version: ${{ inputs.eksctl_version }}
     - name: delete-cluster
-      if: ${{ inputs.private_cluster == 'false' }}
       shell: bash
       env:
         CLUSTER_NAME: ${{ inputs.cluster_name }}
+        PRIVATE_CLUSTER: ${{ inputs.private_cluster }}
       run: |
-        eksctl delete cluster --name "$CLUSTER_NAME" --timeout 60m --wait || true
+        # The runner can't reach a private cluster's API server, so skip draining and push past the kube API errors
+        if [[ "$PRIVATE_CLUSTER" == 'true' ]]; then
+          eksctl delete cluster --name "$CLUSTER_NAME" --timeout 60m --wait --force --disable-nodegroup-eviction || true
+        else
+          eksctl delete cluster --name "$CLUSTER_NAME" --timeout 60m --wait || true
+        fi
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version-file: test/hack/resource/go.mod
