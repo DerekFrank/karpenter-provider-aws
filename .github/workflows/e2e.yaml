@@ -81,6 +81,9 @@ on:
       cluster_name:
         type: string
         description: If cluster_name is empty, a new cluster will be created. Otherwise, tests will run on an existing cluster
+      stagger_index:
+        type: string
+        description: Position of this job among concurrently started E2E jobs. Cluster setup waits stagger_index x 20s. If empty, it waits a random 1-300s
     secrets:
       SLACK_WEBHOOK_URL:
         required: false
@@ -93,6 +96,10 @@ jobs:
       statuses: write # ./.github/actions/commit-status/start
     name: suite-${{ inputs.suite }}
     runs-on: ubuntu-latest
+    env:
+      # Retry throttled AWS CLI and SDK calls (e.g. CloudFormation ExecuteChangeSet) longer than the default 3 attempts
+      AWS_RETRY_MODE: adaptive
+      AWS_MAX_ATTEMPTS: "10"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -109,11 +116,20 @@ jobs:
           role-to-assume: arn:aws:iam::${{ vars.CI_ACCOUNT_ID }}:role/${{ vars.CI_ROLE_NAME }}
           aws-region: ${{ inputs.region }}
           role-duration-seconds: 21600
-      - name: add jitter on cluster setup
-        if: github.repository == 'aws/karpenter-provider-aws'
+      - name: stagger cluster setup
+        if: github.repository == 'aws/karpenter-provider-aws' && inputs.cluster_name == ''
+        env:
+          STAGGER_INDEX: ${{ inputs.stagger_index }}
         run: |
-          # Creating jitter so that we can stagger cluster creation to avoid throttling
-          sleep $(( RANDOM % 300 + 1 ))
+          # Spread cluster creation across concurrent jobs to avoid CloudFormation and IAM throttling.
+          # Matrix runs pass each job's position so jobs start 20s apart; other callers get random jitter.
+          if [[ -n "$STAGGER_INDEX" ]]; then
+            delay=$(( STAGGER_INDEX * 20 ))
+          else
+            delay=$(( RANDOM % 300 + 1 ))
+          fi
+          echo "Waiting ${delay}s before cluster setup"
+          sleep "$delay"
       - id: generate-cluster-name
         name: generate cluster name
         env:
@@ -143,13 +159,23 @@ jobs:
           ip_family: ${{ contains(inputs.suite, 'IPv6') && 'IPv6' || 'IPv4' }} # Set the value to IPv6 if IPv6 suite, else IPv4
           private_cluster: ${{ inputs.workflow_trigger == 'private_cluster' }}
           git_ref: ${{ inputs.git_ref }}
-          ecr_account_id: ${{ vars.SNAPSHOT_ACCOUNT_ID }}
-          ecr_region: ${{ vars.SNAPSHOT_REGION }}
           prometheus_workspace_id: ${{ vars.WORKSPACE_ID }}
           prometheus_region: ${{ vars.PROMETHEUS_REGION }}
           enable_local_zones: ${{ inputs.suite == 'LocalZone' }}
           cleanup: ${{ inputs.cleanup }}
           codebuild_role: ${{ vars[format('{0}_CODEBUILD_ROLE', inputs.codebuild_region)] }}
+      - name: install karpenter
+        if: inputs.cluster_name == '' && inputs.workflow_trigger != 'private_cluster'
+        uses: ./.github/actions/e2e/install-karpenter
+        with:
+          account_id: ${{ vars.CI_ACCOUNT_ID }}
+          role: ${{ vars.CI_ROLE_NAME }}
+          region: ${{ inputs.region }}
+          ecr_account_id: ${{ vars.SNAPSHOT_ACCOUNT_ID }}
+          ecr_region: ${{ vars.SNAPSHOT_REGION }}
+          cluster_name: ${{ steps.generate-cluster-name.outputs.CLUSTER_NAME }}
+          k8s_version: ${{ inputs.k8s_version }}
+          git_ref: ${{ inputs.git_ref }}
       - name: run tests for private cluster
         if: ${{ inputs.workflow_trigger == 'private_cluster' }}
         uses: ./.github/actions/e2e/run-tests-private-cluster

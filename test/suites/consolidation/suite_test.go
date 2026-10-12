@@ -137,7 +137,7 @@ var _ = DescribeTableSubtree("Consolidation", Ordered, func(minValuesPolicy opti
 			podLabels := map[string]string{"app": "regular-app"}
 			pod := coretest.Pod(coretest.PodOptions{
 				// use a non-pause image so that we can have a sleep
-				Image:   "alpine:3.20.2",
+				Image:   "public.ecr.aws/docker/library/alpine:3.20.2",
 				Command: []string{"/bin/sh", "-c", "sleep 30"},
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: podLabels,

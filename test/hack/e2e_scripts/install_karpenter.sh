@@ -7,6 +7,7 @@ if [[ "$PRIVATE_CLUSTER" == "true" ]]; then
   ADDITIONAL_FLAGS="--set .Values.controller.image.repository=$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/karpenter/snapshot/controller --set .Values.controller.image.digest=\"\" --set .Values.postInstallHook.image.repository=$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/ecr-public/bitnami/kubectl --set .Values.postInstallHook.image.digest=\"\""
 fi
 
+rc=0
 helm upgrade --install karpenter "${CHART}" \
   -n kube-system \
   --version "0-$(git rev-parse HEAD)" \
@@ -44,4 +45,16 @@ helm upgrade --install karpenter "${CHART}" \
   --set "serviceMonitor.endpointConfig.relabelings[2].replacement=$(git describe --abbrev=0 --tags)" \
   --set "serviceMonitor.endpointConfig.relabelings[3].targetLabel=commitsAfterTag" \
   --set "serviceMonitor.endpointConfig.relabelings[3].replacement=\"$(git describe --tags | cut -d '-' -f 2)\"" \
-  --wait
+  --wait || rc=$?
+
+# helm --wait only reports a timeout, so print the controller state to make crash loops visible
+if [[ $rc -ne 0 ]]; then
+  echo "helm upgrade --install karpenter failed (exit $rc), dumping Karpenter pod state"
+  selector=app.kubernetes.io/name=karpenter
+  kubectl get pods -n kube-system -l "$selector" -o wide
+  kubectl describe pods -n kube-system -l "$selector"
+  kubectl logs -n kube-system -l "$selector" --all-containers --prefix --tail=200
+  echo "Logs from previous (crashed) Karpenter containers:"
+  kubectl logs -n kube-system -l "$selector" --all-containers --prefix --tail=200 --previous
+  exit "$rc"
+fi

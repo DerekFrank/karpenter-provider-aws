@@ -61,7 +61,7 @@ func init() {
 
 var WindowsDefaultImage = "mcr.microsoft.com/oss/kubernetes/pause:3.9"
 
-var EphemeralInitContainerImage = "alpine"
+var EphemeralInitContainerImage = "public.ecr.aws/docker/library/alpine:latest"
 
 type Environment struct {
 	*common.Environment
