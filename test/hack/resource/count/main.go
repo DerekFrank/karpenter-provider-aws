@@ -20,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/samber/lo"
 	"go.uber.org/zap"
@@ -39,17 +40,18 @@ func main() {
 	ec2Client := ec2.NewFromConfig(cfg)
 	cloudFormationClient := cloudformation.NewFromConfig(cfg)
 	iamClient := iam.NewFromConfig(cfg)
+	eksClient := eks.NewFromConfig(cfg)
 	metricsClient := metrics.Client(metrics.NewTimeStream(cfg))
 
 	resourceTypes := []resourcetypes.Type{
 		resourcetypes.NewInstance(ec2Client),
 		resourcetypes.NewVPCEndpoint(ec2Client),
 		resourcetypes.NewENI(ec2Client),
-		resourcetypes.NewSecurityGroup(ec2Client),
+		resourcetypes.NewSecurityGroup(ec2Client, eksClient),
 		resourcetypes.NewLaunchTemplate(ec2Client),
 		resourcetypes.NewOIDC(iamClient),
-		resourcetypes.NewInstanceProfile(iamClient),
-		resourcetypes.NewStack(cloudFormationClient),
+		resourcetypes.NewInstanceProfile(iamClient, eksClient),
+		resourcetypes.NewStack(cloudFormationClient, iamClient),
 		resourcetypes.NewVPCPeeringConnection(ec2Client),
 	}
 

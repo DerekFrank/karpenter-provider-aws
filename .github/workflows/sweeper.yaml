@@ -1,7 +1,9 @@
 name: Sweeper
 on:
   schedule:
-    - cron: '0 */12 * * *'
+    # Keep this well away from the E2E schedules (matrix '7 */8', scale '7 18', version compatibility and private
+    # cluster '7 0'). Deleting stacks shares a per-region CloudFormation limit with the stacks E2E runs create.
+    - cron: '0 4,12 * * *'
   workflow_dispatch:
 jobs:
   sweeper:
@@ -35,3 +37,9 @@ jobs:
           fi
         working-directory: ./test/hack/resource/clean
         name: "Run cleanup script"
+      - name: Notify slack of failure
+        if: failure() && github.event_name != 'workflow_run'
+        uses: ./.github/actions/e2e/slack/send-message
+        with:
+          message: ":alert: sweeper failure in ${{ matrix.region }} (https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) @channel"
+          url: ${{ secrets.SLACK_WEBHOOK_URL }}
