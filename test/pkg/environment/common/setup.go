@@ -30,6 +30,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	autoscalingv1beta1 "sigs.k8s.io/karpenter/pkg/apis/autoscaling/v1beta1"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
@@ -155,6 +156,24 @@ func (env *Environment) CleanupObjects(cleanableObjects ...client.Object) {
 		})
 	}
 	wg.Wait()
+}
+
+// ExpectTestingFinalizerAdded adds TestingFinalizer to each object with a merge patch built from a fresh read. Unlike
+// ExpectUpdated, which sends the whole (possibly stale) object with the latest resourceVersion forced onto it, this only
+// sends the finalizers, and the optimistic lock makes a write that lands between the Get and the Patch conflict and retry
+// instead of being reverted. obj is updated with the patched object.
+func (env *Environment) ExpectTestingFinalizerAdded(objs ...client.Object) {
+	GinkgoHelper()
+	for _, obj := range objs {
+		Eventually(func(g Gomega) {
+			g.Expect(env.Client.Get(env.Context, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+			stored := obj.DeepCopyObject().(client.Object)
+			if !controllerutil.AddFinalizer(obj, TestingFinalizer) {
+				return
+			}
+			g.Expect(env.Client.Patch(env.Context, obj, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{}))).To(Succeed())
+		}).WithTimeout(10 * time.Second).Should(Succeed())
+	}
 }
 
 func (env *Environment) ExpectTestingFinalizerRemoved(obj client.Object) error {

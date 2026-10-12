@@ -102,12 +102,13 @@ var _ = Describe("Interruption", func() {
 			env.ExpectExperimentTemplateDeleted(*exp.ExperimentTemplateId)
 		})
 
-		// We are expecting the node to be terminated before the termination is complete
+		// We are expecting the node to be terminated before the termination is complete. The FIS experiment, EventBridge
+		// rule and SQS queue usually deliver the warning to Karpenter in about 15s, but have taken just over a minute.
 		By("waiting to receive the interruption and terminate the node")
 		Eventually(func(g Gomega) {
 			g.Expect(env.Client.Get(env.Context, client.ObjectKeyFromObject(node), node)).To(Succeed())
 			g.Expect(!node.DeletionTimestamp.IsZero()).To(BeTrue())
-		}).WithTimeout(time.Minute).Should(Succeed())
+		}).WithTimeout(3 * time.Minute).Should(Succeed())
 		env.EventuallyExpectNotFound(node)
 		env.EventuallyExpectHealthyPodCount(selector, 1)
 	})

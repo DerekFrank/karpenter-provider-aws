@@ -40,7 +40,6 @@ import (
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
 	"github.com/aws/karpenter-provider-aws/pkg/test"
 	"github.com/aws/karpenter-provider-aws/test/pkg/environment/aws"
-	"github.com/aws/karpenter-provider-aws/test/pkg/environment/common"
 )
 
 var env *aws.Environment
@@ -654,8 +653,7 @@ var _ = Describe("Drift", Ordered, func() {
 			Expect(node.Labels).To(HaveKeyWithValue(v1.LabelCapacityReservationID, capacityReservationID))
 
 			// Hold the node so the window between the drifted nodeclaim's deletion and its refill stays observable
-			node.Finalizers = append(node.Finalizers, common.TestingFinalizer)
-			env.ExpectUpdated(node)
+			env.ExpectTestingFinalizerAdded(node)
 			nodeClass.Spec.Tags = lo.Assign(nodeClass.Spec.Tags, map[string]string{"test-key": "test-value"})
 			env.ExpectUpdated(nodeClass)
 
