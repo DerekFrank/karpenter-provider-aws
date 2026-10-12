@@ -57,8 +57,14 @@ runs:
       CLUSTER_NAME: ${{ inputs.cluster_name }}
       PRIVATE_CLUSTER: ${{ inputs.private_cluster }}
     run: |
-      output=$(./test/hack/e2e_scripts/install_karpenter.sh 2>&1)
+      # Print the install output even when it fails, so helm errors and pod diagnostics show up in the log
+      rc=0
+      output=$(./test/hack/e2e_scripts/install_karpenter.sh 2>&1) || rc=$?
       echo "$output"
+      if [[ $rc -ne 0 ]]; then
+        echo "::error::Karpenter install failed (exit $rc), see the helm output and pod diagnostics above"
+        exit "$rc"
+      fi
       if echo "$output" | grep -i "warning.*violate.*podsecurity"; then
         echo "ERROR: Karpenter does not respect restricted Pod Security Standard"
         exit 1

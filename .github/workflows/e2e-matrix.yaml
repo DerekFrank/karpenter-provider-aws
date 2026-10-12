@@ -121,6 +121,8 @@ jobs:
       cleanup: ${{ inputs.cleanup }}
       workflow_trigger: ${{ inputs.workflow_trigger }}
       source: ${{ matrix.suite.source }}
+      # Without a parallelism limit, start suites 20s apart. With one, jobs already run in batches, so use random jitter.
+      stagger_index: ${{ !inputs.parallelism && format('{0}', strategy.job-index) || '' }}
     secrets:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
   e2e-upgrade:
@@ -136,6 +138,8 @@ jobs:
       cleanup: ${{ inputs.cleanup }}
       workflow_trigger: ${{ inputs.workflow_trigger }}
       source: all
+      # Slot after the 17 e2e suites (job indexes 0-16)
+      stagger_index: ${{ !inputs.parallelism && '17' || '' }}
     secrets:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
   summary:

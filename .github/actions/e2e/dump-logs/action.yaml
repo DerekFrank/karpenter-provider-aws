@@ -32,6 +32,11 @@ runs:
       shell: bash
       run: |
         kubectl logs -n kube-system -l app.kubernetes.io/name=karpenter --all-containers --ignore-errors
+    - name: previous controller-logs
+      shell: bash
+      run: |
+        # Logs from containers that restarted, so a crash or OOM mid-suite is diagnosable
+        kubectl logs -n kube-system -l app.kubernetes.io/name=karpenter --all-containers --prefix --previous --tail=500 || true
     - name: describe karpenter pods
       shell: bash
       run: |
