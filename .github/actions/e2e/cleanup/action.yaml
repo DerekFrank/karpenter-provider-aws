@@ -30,6 +30,20 @@ runs:
     - uses: ./.github/actions/e2e/install-eksctl
       with:
         version: ${{ inputs.eksctl_version }}
+    - name: delete-nodepools-and-ec2nodeclasses
+      if: ${{ inputs.private_cluster == 'false' }}
+      shell: bash
+      env:
+        CLUSTER_NAME: ${{ inputs.cluster_name }}
+      run: |
+        # Let Karpenter terminate its nodes and delete the instance profiles it created while it is still running.
+        # A leftover profile keeps holding KarpenterNodeRole-<cluster>, so the iam-<cluster> stack can't delete the role.
+        if ! aws eks update-kubeconfig --name "$CLUSTER_NAME"; then
+          echo "cluster $CLUSTER_NAME not found, skipping"
+          exit 0
+        fi
+        kubectl delete nodepools --all --timeout 10m || true
+        kubectl delete ec2nodeclasses --all --timeout 5m || true
     - name: delete-cluster
       if: ${{ inputs.private_cluster == 'false' }}
       shell: bash

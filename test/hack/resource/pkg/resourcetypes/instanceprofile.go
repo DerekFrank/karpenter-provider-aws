@@ -17,9 +17,11 @@ package resourcetypes
 import (
 	"context"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/samber/lo"
@@ -27,12 +29,17 @@ import (
 	v1 "k8s.io/api/core/v1"
 )
 
+// nodeRolePrefix is the name prefix of the node role that setup-cluster's iam-<cluster> stack creates.
+// A Karpenter-created instance profile still holding this role blocks the stack from deleting the role.
+const nodeRolePrefix = "KarpenterNodeRole-"
+
 type InstanceProfile struct {
 	iamClient *iam.Client
+	clusters  *clusterChecker
 }
 
-func NewInstanceProfile(iamClient *iam.Client) *InstanceProfile {
-	return &InstanceProfile{iamClient: iamClient}
+func NewInstanceProfile(iamClient *iam.Client, eksClient *eks.Client) *InstanceProfile {
+	return &InstanceProfile{iamClient: iamClient, clusters: newClusterChecker(eksClient)}
 }
 
 func (ip *InstanceProfile) String() string {
@@ -48,6 +55,18 @@ func (ip *InstanceProfile) GetExpired(ctx context.Context, expirationTime time.T
 	if err != nil {
 		return names, err
 	}
+	cfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		return names, err
+	}
+
+	// Since we can only get the date of the instance profile (not the exact time the instance profile was created)
+	// we add a day to the time that it was created to account for the worst-case of the instance profile being created
+	// at 23:59:59 and being marked with a time of 00:00:00 due to only capturing the date and not the time.
+	// We filter on this before listing tags, since ListInstanceProfileTags is called once per profile
+	instanceProfiles = lo.Filter(instanceProfiles, func(profile iamtypes.InstanceProfile, _ int) bool {
+		return lo.FromPtr(profile.CreateDate).Add(time.Hour * 24).Before(expirationTime)
+	})
 
 	errs := make([]error, len(instanceProfiles))
 	for i := range instanceProfiles {
@@ -59,6 +78,22 @@ func (ip *InstanceProfile) GetExpired(ctx context.Context, expirationTime time.T
 			continue
 		}
 
+		// Karpenter-created profiles don't carry the testing tag, so they're matched by the node role they still hold
+		if cluster, ok := nodeRoleProfileCluster(instanceProfiles[i], profiles.Tags, cfg.Region); ok {
+			if slices.Contains(excludedClusters, cluster) || !isE2ECluster(cluster) {
+				continue
+			}
+			gone, err := ip.clusters.Gone(ctx, cluster)
+			if err != nil {
+				errs[i] = err
+				continue
+			}
+			if gone {
+				names = append(names, lo.FromPtr(instanceProfiles[i].InstanceProfileName))
+			}
+			continue
+		}
+
 		clusterName, _ := lo.Find(profiles.Tags, func(tag iamtypes.Tag) bool {
 			return lo.FromPtr(tag.Key) == karpenterTestingTag
 		})
@@ -66,13 +101,10 @@ func (ip *InstanceProfile) GetExpired(ctx context.Context, expirationTime time.T
 		region, _ := lo.Find(profiles.Tags, func(tag iamtypes.Tag) bool {
 			return lo.FromPtr(tag.Key) == v1.LabelTopologyRegion
 		})
-		if slices.Contains(excludedClusters, lo.FromPtr(clusterName.Value)) || lo.FromPtr(region.Value) != lo.Must(config.LoadDefaultConfig(ctx)).Region {
+		if slices.Contains(excludedClusters, lo.FromPtr(clusterName.Value)) || lo.FromPtr(region.Value) != cfg.Region {
 			continue
 		}
-		// Since we can only get the date of the instance profile (not the exact time the instance profile was created)
-		// we add a day to the time that it was created to account for the worst-case of the instance profile being created
-		// at 23:59:59 and being marked with a time of 00:00:00 due to only capturing the date and not the time
-		if lo.FromPtr(clusterName.Value) != "" && instanceProfiles[i].CreateDate.Add(time.Hour*24).Before(expirationTime) {
+		if lo.FromPtr(clusterName.Value) != "" {
 			names = append(names, lo.FromPtr(instanceProfiles[i].InstanceProfileName))
 		}
 	}
@@ -93,6 +125,8 @@ func (ip *InstanceProfile) Get(ctx context.Context, clusterName string) (names [
 	if err != nil {
 		return names, err
 	}
+	// Only list tags for the profiles Karpenter would have created for this cluster, rather than every profile in the account
+	instanceProfiles = clusterInstanceProfiles(instanceProfiles, clusterName)
 
 	errs := make([]error, len(instanceProfiles))
 	for i := range instanceProfiles {
@@ -104,8 +138,22 @@ func (ip *InstanceProfile) Get(ctx context.Context, clusterName string) (names [
 			continue
 		}
 
-		for _, t := range profiles.Tags {
-			if lo.FromPtr(t.Key) == karpenterTestingTag && lo.FromPtr(t.Value) == clusterName {
+		if _, found := lo.Find(profiles.Tags, func(t iamtypes.Tag) bool {
+			return lo.FromPtr(t.Key) == karpenterTestingTag && lo.FromPtr(t.Value) == clusterName
+		}); found {
+			names = append(names, lo.FromPtr(instanceProfiles[i].InstanceProfileName))
+			continue
+		}
+		// Karpenter-created profiles don't carry the testing tag. Only delete them once the cluster is gone
+		if _, found := lo.Find(profiles.Tags, func(t iamtypes.Tag) bool {
+			return lo.FromPtr(t.Key) == karpenterClusterNameTag && lo.FromPtr(t.Value) == clusterName
+		}); found {
+			gone, err := ip.clusters.Gone(ctx, clusterName)
+			if err != nil {
+				errs[i] = err
+				continue
+			}
+			if gone {
 				names = append(names, lo.FromPtr(instanceProfiles[i].InstanceProfileName))
 			}
 		}
@@ -120,18 +168,24 @@ func (ip *InstanceProfile) Cleanup(ctx context.Context, names []string) ([]strin
 	var deleted []string
 	var errs error
 	for i := range names {
-		out, _ := ip.iamClient.GetInstanceProfile(ctx, &iam.GetInstanceProfileInput{InstanceProfileName: lo.ToPtr(names[i])})
-		if len(out.InstanceProfile.Roles) != 0 {
-			_, _ = ip.iamClient.RemoveRoleFromInstanceProfile(ctx, &iam.RemoveRoleFromInstanceProfileInput{
-				InstanceProfileName: lo.ToPtr(names[i]),
-				RoleName:            out.InstanceProfile.Roles[0].RoleName,
-			})
-		}
-		_, err := ip.iamClient.DeleteInstanceProfile(ctx, &iam.DeleteInstanceProfileInput{
-			InstanceProfileName: lo.ToPtr(names[i]),
-		})
+		out, err := ip.iamClient.GetInstanceProfile(ctx, &iam.GetInstanceProfileInput{InstanceProfileName: lo.ToPtr(names[i])})
 		if err != nil {
 			errs = multierr.Append(errs, err)
+			continue
+		}
+		for _, role := range out.InstanceProfile.Roles {
+			if _, err := ip.iamClient.RemoveRoleFromInstanceProfile(ctx, &iam.RemoveRoleFromInstanceProfileInput{
+				InstanceProfileName: lo.ToPtr(names[i]),
+				RoleName:            role.RoleName,
+			}); err != nil {
+				errs = multierr.Append(errs, err)
+			}
+		}
+		if _, err := ip.iamClient.DeleteInstanceProfile(ctx, &iam.DeleteInstanceProfileInput{
+			InstanceProfileName: lo.ToPtr(names[i]),
+		}); err != nil {
+			errs = multierr.Append(errs, err)
+			continue
 		}
 		deleted = append(deleted, names[i])
 	}
@@ -150,4 +204,34 @@ func (ip *InstanceProfile) getAllInstanceProfiles(ctx context.Context) (instance
 	}
 
 	return instanceprofiles, nil
+}
+
+// clusterInstanceProfiles returns the profiles that are named the way Karpenter names the instance profiles it creates
+// for a cluster ("<cluster-name>_<hash>", see EC2NodeClass.InstanceProfileName)
+func clusterInstanceProfiles(instanceProfiles []iamtypes.InstanceProfile, clusterName string) []iamtypes.InstanceProfile {
+	return lo.Filter(instanceProfiles, func(profile iamtypes.InstanceProfile, _ int) bool {
+		return strings.HasPrefix(lo.FromPtr(profile.InstanceProfileName), clusterName+"_")
+	})
+}
+
+// nodeRoleProfileCluster returns the cluster of a Karpenter-created instance profile in region that still holds the
+// cluster's KarpenterNodeRole-<cluster> role
+func nodeRoleProfileCluster(profile iamtypes.InstanceProfile, tags []iamtypes.Tag, region string) (string, bool) {
+	clusterTag, found := lo.Find(tags, func(t iamtypes.Tag) bool { return lo.FromPtr(t.Key) == karpenterClusterNameTag })
+	if !found || lo.FromPtr(clusterTag.Value) == "" {
+		return "", false
+	}
+	cluster := lo.FromPtr(clusterTag.Value)
+	if _, found := lo.Find(tags, func(t iamtypes.Tag) bool {
+		return lo.FromPtr(t.Key) == v1.LabelTopologyRegion && lo.FromPtr(t.Value) == region
+	}); !found {
+		return "", false
+	}
+	if !strings.HasPrefix(lo.FromPtr(profile.InstanceProfileName), cluster+"_") {
+		return "", false
+	}
+	if _, found := lo.Find(profile.Roles, func(r iamtypes.Role) bool { return lo.FromPtr(r.RoleName) == nodeRolePrefix+cluster }); !found {
+		return "", false
+	}
+	return cluster, true
 }

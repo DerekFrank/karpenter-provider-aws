@@ -17,21 +17,28 @@ package resourcetypes
 import (
 	"context"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/samber/lo"
 	"go.uber.org/multierr"
 )
 
+// eksClusterSGPrefix is the name prefix of the security group EKS creates for a cluster, "eks-cluster-sg-<cluster>-<id>".
+// It isn't part of the eksctl stack, and when it leaks it keeps the stack from deleting the VPC.
+const eksClusterSGPrefix = "eks-cluster-sg-"
+
 type SecurityGroup struct {
 	ec2Client *ec2.Client
+	clusters  *clusterChecker
 }
 
-func NewSecurityGroup(ec2Client *ec2.Client) *SecurityGroup {
-	return &SecurityGroup{ec2Client: ec2Client}
+func NewSecurityGroup(ec2Client *ec2.Client, eksClient *eks.Client) *SecurityGroup {
+	return &SecurityGroup{ec2Client: ec2Client, clusters: newClusterChecker(eksClient)}
 }
 
 func (sg *SecurityGroup) String() string {
@@ -77,7 +84,46 @@ func (sg *SecurityGroup) GetExpired(ctx context.Context, expirationTime time.Tim
 		}
 	}
 
-	return ids, err
+	clusterSGs, err := sg.getEKSClusterSecurityGroups(ctx, "")
+	if err != nil {
+		return ids, err
+	}
+	var errs error
+	for _, sgroup := range clusterSGs {
+		clusterName, ok := eksClusterSGCluster(sgroup)
+		if !ok || !isE2ECluster(clusterName) || slices.Contains(excludedClusters, clusterName) {
+			continue
+		}
+		// These carry no creation time, so we only delete them once the cluster is gone
+		gone, err := sg.clusters.Gone(ctx, clusterName)
+		if err != nil {
+			errs = multierr.Append(errs, err)
+			continue
+		}
+		if gone {
+			ids = append(ids, lo.FromPtr(sgroup.GroupId))
+		}
+	}
+	return ids, errs
+}
+
+// getEKSClusterSecurityGroups returns the EKS-created cluster security groups, for one cluster if clusterName is set
+func (sg *SecurityGroup) getEKSClusterSecurityGroups(ctx context.Context, clusterName string) ([]ec2types.SecurityGroup, error) {
+	filters := []ec2types.Filter{{Name: lo.ToPtr("group-name"), Values: []string{eksClusterSGPrefix + "*"}}}
+	if clusterName != "" {
+		filters = append(filters, ec2types.Filter{Name: lo.ToPtr("tag:" + eksClusterSGNameTag), Values: []string{clusterName}})
+	}
+	return sg.getAllSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{Filters: filters})
+}
+
+// eksClusterSGCluster returns the cluster an EKS-created cluster security group belongs to
+func eksClusterSGCluster(sgroup ec2types.SecurityGroup) (string, bool) {
+	tag, found := lo.Find(sgroup.Tags, func(t ec2types.Tag) bool { return lo.FromPtr(t.Key) == eksClusterSGNameTag })
+	clusterName := lo.FromPtr(tag.Value)
+	if !found || !strings.HasPrefix(lo.FromPtr(sgroup.GroupName), eksClusterSGPrefix+clusterName+"-") {
+		return "", false
+	}
+	return clusterName, true
 }
 
 func (sg *SecurityGroup) CountAll(ctx context.Context) (count int, err error) {
@@ -106,7 +152,20 @@ func (sg *SecurityGroup) Get(ctx context.Context, clusterName string) (ids []str
 		ids = append(ids, lo.FromPtr(sgroup.GroupId))
 	}
 
-	return ids, err
+	clusterSGs, err := sg.getEKSClusterSecurityGroups(ctx, clusterName)
+	if err != nil {
+		return ids, err
+	}
+	if len(clusterSGs) > 0 {
+		gone, err := sg.clusters.Gone(ctx, clusterName)
+		if err != nil {
+			return ids, err
+		}
+		if gone {
+			ids = append(ids, lo.Map(clusterSGs, func(g ec2types.SecurityGroup, _ int) string { return lo.FromPtr(g.GroupId) })...)
+		}
+	}
+	return lo.Uniq(ids), nil
 }
 
 // Cleanup any old security groups that were provisioned as part of testing

@@ -17,6 +17,7 @@ package resourcetypes
 import (
 	"context"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -24,6 +25,14 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/samber/lo"
 	"go.uber.org/multierr"
+)
+
+const (
+	branchENIDescription  = "aws-k8s-branch-eni"
+	eniOwnerTag           = "eks:eni:owner"
+	vpcResourceController = "eks-vpc-resource-controller"
+	branchENIInstanceTag  = "node.k8s.amazonaws.com/instance_id"
+	k8sClusterTagPrefix   = "kubernetes.io/cluster/"
 )
 
 type ENI struct {
@@ -77,7 +86,67 @@ func (e *ENI) GetExpired(ctx context.Context, expirationTime time.Time, excluded
 		}
 	}
 
-	return ids, err
+	branchIDs, err := e.getExpiredBranchENIs(ctx, excludedClusters)
+	return append(ids, branchIDs...), err
+}
+
+// getExpiredBranchENIs returns unattached VPC resource controller branch ENIs from E2E clusters whose node no longer exists.
+// Branch ENIs carry no creation timestamp, so the node being gone stands in for the expiration time. Leaked branch ENIs block
+// deletion of the cluster's subnets and security groups, which leaves the eksctl stack in DELETE_FAILED.
+func (e *ENI) getExpiredBranchENIs(ctx context.Context, excludedClusters []string) (ids []string, err error) {
+	enis, err := e.getAllENIs(ctx, &ec2.DescribeNetworkInterfacesInput{
+		Filters: []ec2types.Filter{
+			{Name: lo.ToPtr("description"), Values: []string{branchENIDescription}},
+			{Name: lo.ToPtr("status"), Values: []string{string(ec2types.NetworkInterfaceStatusAvailable)}},
+			{Name: lo.ToPtr("tag:" + eniOwnerTag), Values: []string{vpcResourceController}},
+		},
+	})
+	if err != nil {
+		return ids, err
+	}
+	enis = lo.Filter(enis, func(ni ec2types.NetworkInterface, _ int) bool {
+		clusterName, ok := branchENIClusterName(ni)
+		return ok && isE2ECluster(clusterName) && !slices.Contains(excludedClusters, clusterName)
+	})
+	liveInstances, err := e.getLiveInstanceIDs(ctx, lo.Uniq(lo.FilterMap(enis, func(ni ec2types.NetworkInterface, _ int) (string, bool) {
+		return branchENIInstanceID(ni)
+	})))
+	if err != nil {
+		return ids, err
+	}
+	return orphanedBranchENIs(enis, liveInstances), nil
+}
+
+// getLiveInstanceIDs returns the subset of instanceIDs that exist and are not terminated
+func (e *ENI) getLiveInstanceIDs(ctx context.Context, instanceIDs []string) (map[string]struct{}, error) {
+	live := map[string]struct{}{}
+	// EC2 accepts at most 200 values per filter
+	for _, chunk := range lo.Chunk(instanceIDs, 200) {
+		paginator := ec2.NewDescribeInstancesPaginator(e.ec2Client, &ec2.DescribeInstancesInput{
+			Filters: []ec2types.Filter{
+				{Name: lo.ToPtr("instance-id"), Values: chunk},
+				{Name: lo.ToPtr("instance-state-name"), Values: []string{
+					string(ec2types.InstanceStateNamePending),
+					string(ec2types.InstanceStateNameRunning),
+					string(ec2types.InstanceStateNameShuttingDown),
+					string(ec2types.InstanceStateNameStopping),
+					string(ec2types.InstanceStateNameStopped),
+				}},
+			},
+		})
+		for paginator.HasMorePages() {
+			page, err := paginator.NextPage(ctx)
+			if err != nil {
+				return nil, err
+			}
+			for _, reservation := range page.Reservations {
+				for _, instance := range reservation.Instances {
+					live[lo.FromPtr(instance.InstanceId)] = struct{}{}
+				}
+			}
+		}
+	}
+	return live, nil
 }
 
 func (e *ENI) CountAll(ctx context.Context) (count int, err error) {
@@ -102,10 +171,20 @@ func (e *ENI) Get(ctx context.Context, clusterName string) (ids []string, err er
 		return ids, err
 	}
 
-	for _, ni := range enis {
+	branchENIs, err := e.getAllENIs(ctx, &ec2.DescribeNetworkInterfacesInput{
+		Filters: []ec2types.Filter{
+			{Name: lo.ToPtr("tag-key"), Values: []string{k8sClusterTagPrefix + clusterName}},
+			{Name: lo.ToPtr("tag:" + eniOwnerTag), Values: []string{vpcResourceController}},
+		},
+	})
+	if err != nil {
+		return ids, err
+	}
+
+	for _, ni := range append(enis, branchENIs...) {
 		ids = append(ids, lo.FromPtr(ni.NetworkInterfaceId))
 	}
-	return ids, err
+	return lo.Uniq(ids), err
 }
 
 // Cleanup any old ENIs that were managed by Karpenter or were provisioned as part of testing
@@ -139,4 +218,36 @@ func (e *ENI) getAllENIs(ctx context.Context, params *ec2.DescribeNetworkInterfa
 	}
 
 	return enis, nil
+}
+
+func branchENIClusterName(ni ec2types.NetworkInterface) (string, bool) {
+	tag, found := lo.Find(ni.TagSet, func(t ec2types.Tag) bool {
+		return strings.HasPrefix(lo.FromPtr(t.Key), k8sClusterTagPrefix)
+	})
+	if !found {
+		return "", false
+	}
+	return strings.TrimPrefix(lo.FromPtr(tag.Key), k8sClusterTagPrefix), true
+}
+
+func branchENIInstanceID(ni ec2types.NetworkInterface) (string, bool) {
+	tag, found := lo.Find(ni.TagSet, func(t ec2types.Tag) bool {
+		return lo.FromPtr(t.Key) == branchENIInstanceTag
+	})
+	return lo.FromPtr(tag.Value), found && lo.FromPtr(tag.Value) != ""
+}
+
+// orphanedBranchENIs returns the ids of the ENIs whose node is not in liveInstances.
+// ENIs without a node tag are skipped, since we can't tell whether they are still in use.
+func orphanedBranchENIs(enis []ec2types.NetworkInterface, liveInstances map[string]struct{}) (ids []string) {
+	for _, ni := range enis {
+		instanceID, ok := branchENIInstanceID(ni)
+		if !ok {
+			continue
+		}
+		if _, live := liveInstances[instanceID]; !live {
+			ids = append(ids, lo.FromPtr(ni.NetworkInterfaceId))
+		}
+	}
+	return ids
 }
