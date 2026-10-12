@@ -34,13 +34,21 @@ var _ = Describe("Metrics", func() {
 		Expect(err).ToNot(HaveOccurred())
 		availabilityZoneCount = len(azOut.AvailabilityZones)
 
-		itOut, err := env.EC2API.DescribeInstanceTypes(env.Context, &ec2.DescribeInstanceTypesInput{})
-		Expect(err).ToNot(HaveOccurred())
-		instanceTypeCount = len(itOut.InstanceTypes)
+		// DescribeInstanceTypes returns at most 100 results per page, so page through all of them; with only the first
+		// page the expected counts below would always be 0.
+		instanceTypeCount = 0
+		paginator := ec2.NewDescribeInstanceTypesPaginator(env.EC2API, &ec2.DescribeInstanceTypesInput{})
+		for paginator.HasMorePages() {
+			out, err := paginator.NextPage(env.Context)
+			Expect(err).ToNot(HaveOccurred())
+			instanceTypeCount += len(out.InstanceTypes)
+		}
 		capacityTypeCount = 3 // on-demand, spot, and reserved
 	})
 	It("should expose karpenter_cloudprovider_instance_type_offering_price_estimate metrics", func() {
 		env.ExpectCreated(nodeClass, nodePool)
+		// The metrics controller only emits for existing NodePools and requeues every minute (longer while it backs off
+		// after errors such as a not-yet-ready NodeClass), so wait for more than two reconcile periods.
 		Eventually(func(g Gomega) {
 			defer GinkgoRecover()
 			podMetrics := env.ExpectPodMetrics()
@@ -57,7 +65,7 @@ var _ = Describe("Metrics", func() {
 			expectedNonZeroCount := (instanceTypeCount-100)*availabilityZoneCount + (instanceTypeCount-200)*availabilityZoneCount
 			g.Expect(priceMetricCount).To(BeNumerically(">", expectedCount))
 			g.Expect(nonZeroPriceMetricCount).To(BeNumerically(">", expectedNonZeroCount))
-		}, time.Minute, time.Second*5).Should(Succeed())
+		}, 3*time.Minute, time.Second*5).Should(Succeed())
 
 	})
 	It("should expose karpenter_cloudprovider_instance_type_offering_available metrics", func() {
@@ -82,6 +90,6 @@ var _ = Describe("Metrics", func() {
 			expectedNonZeroCount := (instanceTypeCount-100)*selectedAZCount + (instanceTypeCount-200)*selectedAZCount
 			g.Expect(availableMetricCount).To(BeNumerically(">", expectedCount))
 			g.Expect(nonZeroAvailableMetricCount).To(BeNumerically(">", expectedNonZeroCount))
-		}, time.Minute, time.Second*5).Should(Succeed())
+		}, 3*time.Minute, time.Second*5).Should(Succeed())
 	})
 })

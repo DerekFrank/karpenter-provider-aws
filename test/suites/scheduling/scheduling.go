@@ -1084,6 +1084,10 @@ func RegisterTests(minValuesPolicy options.MinValuesPolicy) bool {
 			pod := test.Pod(test.PodOptions{
 				NodeRequirements: []corev1.NodeSelectorRequirement{
 					{Key: v1.LabelInstanceCategory, Operator: corev1.NodeSelectorOpIn, Values: []string{"m"}},
+					// Without this, the cheapest EFA "m" type is m7g.16xlarge, so it's picked on every run, and in CI it
+					// regularly launched with the EFA-only interface but never registered. A 15m registration timeout plus a
+					// replacement doesn't fit in the 16m wait below.
+					{Key: corev1.LabelArchStable, Operator: corev1.NodeSelectorOpIn, Values: []string{karpv1.ArchitectureAmd64}},
 				},
 			})
 			NodeClass.Spec.NetworkInterfaces = []*v1.NetworkInterface{
