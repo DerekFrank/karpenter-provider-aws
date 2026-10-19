@@ -58,11 +58,28 @@ for a subset of older versions and deprecate the others.
 
 ## Release Types
 
-Karpenter offers three types of releases. This section explains the purpose of each release type and how the images for each release type are tagged in our [public image repository](https://gallery.ecr.aws/karpenter).
+Karpenter offers three types of releases, and designates some stable releases as Long-Term Support (LTS) releases. This section explains the purpose of each release type and how the images for each release type are tagged in our [public image repository](https://gallery.ecr.aws/karpenter).
 
 ### Stable Releases
 
 Stable releases are the only recommended versions for production environments. Stable releases are tagged with a semantic version (e.g. `0.35.0`). Note that stable releases prior to `0.35.0` are prefixed with a `v` (e.g. `v0.34.0`).
+
+### Long-Term Support (LTS) Releases
+
+Every 6 months, a stable minor release is designated as a Long-Term Support (LTS) release. Each LTS release is supported for 12 months from its release date:
+
+* **Active Support** (first 6 months): security patches, workload availability fixes, and Kubernetes patch compatibility fixes are backported.
+* **Maintenance Mode** (last 6 months): only security patches are backported.
+* **End of Life (EOL)** (after 12 months): no further patches.
+
+Regular (non-LTS) minor releases are supported only until the next minor release is published. A minor release that is neither the latest release nor an LTS release listed below is no longer supported, and you should upgrade to the latest release or to a supported LTS release.
+
+| Version | Released | EOL      |
+|---------|----------|----------|
+| v1.14   | Jul 2026 | Jul 2027 |
+| v1.9    | Feb 2026 | Feb 2027 |
+
+LTS releases are marked with `(LTS)` in their [GitHub release](https://github.com/aws/karpenter-provider-aws/releases) title. See [SUPPORT.md](https://github.com/aws/karpenter-provider-aws/blob/main/SUPPORT.md) for the full support policy, including which fixes are eligible for backport.
 
 ### Release Candidates
 

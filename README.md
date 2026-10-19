@@ -20,6 +20,9 @@ Come discuss Karpenter in the [#karpenter](https://kubernetes.slack.com/archives
 
 Check out the [Docs](https://karpenter.sh/docs/) to learn more.
 
+## Support Policy
+Only the latest minor release and designated Long-Term Support (LTS) releases receive patches. See [SUPPORT.md](SUPPORT.md) for the support policy and the current LTS releases.
+
 ## Talks
 - 03/19/2024 [Harnessing Karpenter: Transforming Kubernetes Clusters with Argo Workflows](https://www.youtube.com/watch?v=rq57liGu0H4)
 - 12/04/2023 [AWS re:Invent 2023 - Harness the power of Karpenter to scale, optimize & upgrade Kubernetes](https://www.youtube.com/watch?v=lkg_9ETHeks)

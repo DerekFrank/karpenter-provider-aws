@@ -107,6 +107,8 @@ v1.14.0 (LTS)
 
 ## LTS versions table
 
+<!-- Keep this table in sync with the LTS table in website/content/en/{preview,docs,<latest minor>}/upgrading/compatibility.md -->
+
 | Version | Released | EOL      |
 | ---     | ---      | ---      |
 | v1.14   | Jul 2026 | Jul 2027 |
