@@ -7,8 +7,7 @@ aws iam delete-instance-profile --instance-profile-name "KarpenterNodeInstancePr
 # Delete private registry policy for pull through cache
 aws iam delete-role-policy --role-name "${NODE_ROLE}" --policy-name "PullThroughCachePolicy"
 
-# Delete cluster
-eksctl delete cluster --name "${CLUSTER_NAME}" --force
+# The cluster itself is deleted by the cleanup action once this script has removed the endpoints and peering
 
 #Delete manually created VPC endpoints
 endpoints=$(aws ec2 describe-vpc-endpoints --filters Name=vpc-id,Values="${CLUSTER_VPC_ID}" Name=tag:testing/cluster,Values="${CLUSTER_NAME}" --query "VpcEndpoints")
