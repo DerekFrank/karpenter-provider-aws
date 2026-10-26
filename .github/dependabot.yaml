@@ -6,9 +6,7 @@ updates:
     schedule:
       interval: "weekly"
     ignore:
-      # We are currently pinning to pseudo-version for sigs.k8s.io/karpenter package, so that we can take later changes into the AWS provider. 
-      # This may change later, but this is how we have it configured right now.
-      # https://github.com/aws/karpenter-provider-aws/issues/7826
+      # sigs.k8s.io/karpenter is bumped manually (often to a pseudo-version) alongside the AWS provider changes that depend on it
       - dependency-name: sigs.k8s.io/karpenter
     groups:
       # Group updates together, so that they are all applied in a single PR.
@@ -18,7 +16,6 @@ updates:
         patterns:
           - "k8s.io/*"
           - "sigs.k8s.io/*"
-          - "knative.dev/*"
         exclude-patterns:
           - "sigs.k8s.io/karpenter"
       go-deps:
@@ -27,7 +24,30 @@ updates:
         exclude-patterns:
           - "k8s.io/*"
           - "sigs.k8s.io/*"
-          - "knative.dev/*"
+  - package-ecosystem: "gomod"
+    directories:
+      - "/hack/docs/parse-redirects"
+      - "/test/hack/resource"
+      - "/test/hack/soak"
+      - "/tools/kompat"
+      - "/tools/kubereplay"
+      - "/website"
+    schedule:
+      interval: "weekly"
+    groups:
+      # Group updates together, so that they are all applied in a single PR.
+      # Grouped updates are currently in beta and is subject to change.
+      # xref: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file#groups
+      k8s-go-deps:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+      go-deps:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
