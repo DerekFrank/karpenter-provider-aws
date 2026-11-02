@@ -76,6 +76,7 @@ import (
 	"github.com/aws/karpenter-provider-aws/pkg/providers/instancetype"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/instancetype/offering"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/placementgroup"
+	"github.com/aws/karpenter-provider-aws/pkg/providers/pricing"
 	"github.com/aws/karpenter-provider-aws/pkg/test"
 )
 
@@ -2726,6 +2727,168 @@ var _ = Describe("InstanceTypeProvider", func() {
 				}
 			}
 		})
+		Context("Block Device Pricing", func() {
+			const instanceType = "m5.large"
+			// expectOfferingPrices checks that every on-demand and spot offering for the instance type costs the
+			// instance's price plus the given hourly volume price
+			expectOfferingPrices := func(volumePrice float64) {
+				it, err := awsEnv.InstanceTypesProvider.Get(ctx, nodeClass, instanceType)
+				Expect(err).ToNot(HaveOccurred())
+				odPrice, ok := awsEnv.PricingProvider.OnDemandPrice(instanceType)
+				Expect(ok).To(BeTrue())
+				var checked int
+				for _, o := range it.Offerings {
+					switch o.CapacityType() {
+					case karpv1.CapacityTypeOnDemand:
+						Expect(o.Price).To(BeNumerically("~", odPrice+volumePrice, 1e-9))
+					case karpv1.CapacityTypeSpot:
+						spotPrice, ok := awsEnv.PricingProvider.SpotPrice(instanceType, o.Zone())
+						Expect(ok).To(BeTrue())
+						Expect(o.Price).To(BeNumerically("~", spotPrice+volumePrice, 1e-9))
+					default:
+						continue
+					}
+					checked++
+				}
+				Expect(checked).To(BeNumerically(">", 0))
+			}
+			It("should include the AMI family's default root volume in offering prices", func() {
+				// AL2023 defaults to a 20Gi gp3 root volume at $0.08/GiB-month
+				expectOfferingPrices(20 * 0.08 / pricing.HoursPerMonth)
+			})
+			It("should include the default volumes for AMI families with multiple block devices", func() {
+				nodeClass.Spec.AMISelectorTerms = []v1.AMISelectorTerm{{Alias: "bottlerocket@latest"}}
+				// Bottlerocket defaults to a 6Gi gp3 root volume and a 20Gi gp3 data volume
+				expectOfferingPrices(26 * 0.08 / pricing.HoursPerMonth)
+			})
+			It("should include every block device mapping's storage, IOPS, and throughput in offering prices", func() {
+				nodeClass.Spec.BlockDeviceMappings = []*v1.BlockDeviceMapping{
+					{
+						DeviceName: aws.String("/dev/xvda"),
+						EBS: &v1.BlockDevice{
+							VolumeType: aws.String("gp3"),
+							VolumeSize: lo.ToPtr(resource.MustParse("100Gi")),
+							IOPS:       aws.Int64(6000),
+							Throughput: aws.Int64(250),
+						},
+					},
+					{
+						DeviceName: aws.String("/dev/xvdb"),
+						EBS: &v1.BlockDevice{
+							VolumeType: aws.String("io2"),
+							VolumeSize: lo.ToPtr(resource.MustParse("10Gi")),
+							IOPS:       aws.Int64(40000),
+						},
+					},
+				}
+				// gp3: 100GiB storage, plus the 3000 IOPS and 125MiB/s provisioned above the included baseline
+				gp3 := 100*0.08 + 3000*0.005 + 125*0.04
+				// io2: 10GiB storage, plus 32000 IOPS at the first tier and 8000 IOPS at the second
+				io2 := 10*0.125 + 32000*0.065 + 8000*0.0455
+				expectOfferingPrices((gp3 + io2) / pricing.HoursPerMonth)
+			})
+			It("should round volume sizes up to the nearest GiB", func() {
+				nodeClass.Spec.BlockDeviceMappings = []*v1.BlockDeviceMapping{{
+					DeviceName: aws.String("/dev/xvda"),
+					EBS: &v1.BlockDevice{
+						VolumeType: aws.String("gp2"),
+						VolumeSize: lo.ToPtr(resource.MustParse("20G")),
+					},
+				}}
+				// 20G is ~18.6GiB, which is launched as a 19GiB volume
+				expectOfferingPrices(19 * 0.1 / pricing.HoursPerMonth)
+			})
+			It("should not price volumes without a volume type or size", func() {
+				nodeClass.Spec.BlockDeviceMappings = []*v1.BlockDeviceMapping{
+					{
+						DeviceName: aws.String("/dev/xvda"),
+						EBS:        &v1.BlockDevice{SnapshotID: aws.String("snap-xxxxxxxx")},
+					},
+					{
+						DeviceName: aws.String("/dev/xvdb"),
+						EBS:        &v1.BlockDevice{VolumeSize: lo.ToPtr(resource.MustParse("20Gi"))},
+					},
+				}
+				expectOfferingPrices(0)
+			})
+			It("should not price volumes for custom AMI families without block device mappings", func() {
+				nodeClass.Spec.AMIFamily = lo.ToPtr(v1.AMIFamilyCustom)
+				nodeClass.Spec.AMISelectorTerms = []v1.AMISelectorTerm{{ID: "ami-123"}}
+				expectOfferingPrices(0)
+			})
+			DescribeTable("should price NodeClasses that differ only in block device mappings independently, in either order",
+				func(heavyFirst bool) {
+					light := nodeClass.DeepCopy()
+					heavy := nodeClass.DeepCopy()
+					heavy.Name = "heavy"
+					heavy.Spec.BlockDeviceMappings = []*v1.BlockDeviceMapping{{
+						DeviceName: aws.String("/dev/xvda"),
+						EBS: &v1.BlockDevice{
+							VolumeType: aws.String("gp3"),
+							VolumeSize: lo.ToPtr(resource.MustParse("500Gi")),
+						},
+					}}
+					odPrice, ok := awsEnv.PricingProvider.OnDemandPrice(instanceType)
+					Expect(ok).To(BeTrue())
+					expected := map[*v1.EC2NodeClass]float64{
+						light: odPrice + 20*0.08/pricing.HoursPerMonth,
+						heavy: odPrice + 500*0.08/pricing.HoursPerMonth,
+					}
+					order := lo.Ternary(heavyFirst, []*v1.EC2NodeClass{heavy, light}, []*v1.EC2NodeClass{light, heavy})
+					// Resolve twice so the second pass for each NodeClass is served from the shared offering cache
+					for range 2 {
+						for _, nc := range order {
+							it, err := awsEnv.InstanceTypesProvider.Get(ctx, nc, instanceType)
+							Expect(err).ToNot(HaveOccurred())
+							onDemand, ok := lo.Find(it.Offerings, func(o *corecloudprovider.Offering) bool {
+								return o.CapacityType() == karpv1.CapacityTypeOnDemand
+							})
+							Expect(ok).To(BeTrue())
+							Expect(onDemand.Price).To(BeNumerically("~", expected[nc], 1e-9))
+						}
+					}
+				},
+				Entry("light first", false),
+				Entry("heavy first", true),
+			)
+			It("should update cached offering prices when block device mappings change", func() {
+				expectOfferingPrices(20 * 0.08 / pricing.HoursPerMonth)
+				nodeClass.Spec.BlockDeviceMappings = []*v1.BlockDeviceMapping{{
+					DeviceName: aws.String("/dev/xvda"),
+					EBS: &v1.BlockDevice{
+						VolumeType: aws.String("gp3"),
+						VolumeSize: lo.ToPtr(resource.MustParse("500Gi")),
+					},
+				}}
+				expectOfferingPrices(500 * 0.08 / pricing.HoursPerMonth)
+			})
+			It("should scale block device prices with the instance price for reserved offerings", func() {
+				nodeClass.Spec.BlockDeviceMappings = []*v1.BlockDeviceMapping{{
+					DeviceName: aws.String("/dev/xvda"),
+					EBS: &v1.BlockDevice{
+						VolumeType: aws.String("gp3"),
+						VolumeSize: lo.ToPtr(resource.MustParse("500Gi")),
+					},
+				}}
+				awsEnv.CapacityReservationProvider.SetAvailableInstanceCount("cr-123", 1)
+				nodeClass.Status.CapacityReservations = []v1.CapacityReservation{{
+					AvailabilityZone: "test-zone-1a",
+					ID:               "cr-123",
+					InstanceType:     instanceType,
+					ReservationType:  v1.CapacityReservationTypeDefault,
+					State:            v1.CapacityReservationStateActive,
+				}}
+				it, err := awsEnv.InstanceTypesProvider.Get(ctx, nodeClass, instanceType)
+				Expect(err).ToNot(HaveOccurred())
+				odPrice, ok := awsEnv.PricingProvider.OnDemandPrice(instanceType)
+				Expect(ok).To(BeTrue())
+				reserved, ok := lo.Find(it.Offerings, func(o *corecloudprovider.Offering) bool {
+					return o.CapacityType() == karpv1.CapacityTypeReserved
+				})
+				Expect(ok).To(BeTrue())
+				Expect(reserved.Price).To(BeNumerically("~", (odPrice+500*0.08/pricing.HoursPerMonth)/10_000_000.0, 1e-15))
+			})
+		})
 	})
 	Context("Provider Cache", func() {
 		It("should return the same set of instance types from the cache when no changes are made", func() {
@@ -3718,7 +3881,10 @@ var _ = Describe("InstanceTypeProvider", func() {
 			Expect(provider.UpdateInstanceTypes(ctx)).To(Succeed())
 			Expect(provider.UpdateInstanceTypeOfferings(ctx)).To(Succeed())
 
-			offeringNodeClass := &v1.EC2NodeClass{Status: v1.EC2NodeClassStatus{Subnets: []v1.Subnet{{ID: "subnet-test", Zone: "us-east-1a", ZoneID: "use1-az1"}}}}
+			offeringNodeClass := &v1.EC2NodeClass{
+				Spec:   v1.EC2NodeClassSpec{AMISelectorTerms: []v1.AMISelectorTerm{{Alias: "al2023@latest"}}},
+				Status: v1.EC2NodeClassStatus{Subnets: []v1.Subnet{{ID: "subnet-test", Zone: "us-east-1a", ZoneID: "use1-az1"}}},
+			}
 			offeringNodeClass.StatusConditions().SetTrue(status.ConditionReady)
 			instanceTypes, err := provider.List(ctx, offeringNodeClass)
 			Expect(err).ToNot(HaveOccurred())
@@ -3733,6 +3899,21 @@ var _ = Describe("InstanceTypeProvider", func() {
 					return exists && qty.Value() == 4
 				})
 			})).To(BeTrue(), "expected at least one offering with CapacityOverride from the registered resolver")
+
+			// Offerings from additional resolvers are priced with the NodeClass' block devices, like the base offerings
+			m5Large, ok := lo.Find(instanceTypes, func(it *corecloudprovider.InstanceType) bool { return it.Name == "m5.large" })
+			Expect(ok).To(BeTrue())
+			odPrice, ok := awsEnv.PricingProvider.OnDemandPrice("m5.large")
+			Expect(ok).To(BeTrue())
+			extendedOnDemand := lo.Filter(m5Large.Offerings, func(o *corecloudprovider.Offering, _ int) bool {
+				_, exists := o.CapacityOverride[extendedResource]
+				return exists && o.CapacityType() == karpv1.CapacityTypeOnDemand
+			})
+			Expect(extendedOnDemand).ToNot(BeEmpty())
+			for _, o := range extendedOnDemand {
+				// The default root volume is 20Gi of gp3
+				Expect(o.Price).To(BeNumerically("~", odPrice+20*0.08/pricing.HoursPerMonth, 1e-9))
+			}
 		})
 	})
 	Context("Undecodable Kubelet Configuration", func() {

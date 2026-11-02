@@ -70,3 +70,31 @@ func NewOnDemandPriceWithCurrency(instanceType string, price float64, currency s
 	ondemand, _ := json.Marshal(data)
 	return string(ondemand)
 }
+
+// NewEBSPrice returns a pricing API product for an EBS volume rate. usageType is the EBS usage type without its region
+// prefix (e.g. "EBS:VolumeUsage.gp3", "EBS:VolumeP-IOPS.gp3", "EBS:VolumeP-Throughput.gp3").
+func NewEBSPrice(volumeType string, usageType string, unit string, price float64) string {
+	data := map[string]any{
+		"product": map[string]any{
+			"attributes": map[string]any{
+				"volumeApiName": volumeType,
+				"usagetype":     usageType,
+			},
+		},
+		"terms": map[string]any{
+			"OnDemand": map[string]any{
+				"JRTCKXETXF.foo": map[string]any{
+					"offerTermCode": "JRTCKXETXF",
+					"priceDimensions": map[string]any{
+						"JRTCKXETXF.foo.bar": map[string]any{
+							"unit":         unit,
+							"pricePerUnit": map[string]any{"USD": fmt.Sprintf("%f", price)},
+						},
+					},
+				},
+			},
+		},
+	}
+	ebs, _ := json.Marshal(data)
+	return string(ebs)
+}

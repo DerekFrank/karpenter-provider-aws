@@ -17,12 +17,14 @@ package offering
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"sync"
 	"time"
 
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -36,6 +38,7 @@ import (
 
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
 	awscache "github.com/aws/karpenter-provider-aws/pkg/cache"
+	"github.com/aws/karpenter-provider-aws/pkg/providers/amifamily"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/capacityreservation"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/placementgroup"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/pricing"
@@ -48,6 +51,10 @@ type Provider interface {
 // OfferingResolver is called during InjectOfferings to append additional offerings
 // to each instance type. Resolvers are called in registration order, each receiving
 // the offerings produced by the previous step.
+//
+// Offering prices include the hourly price of the instance type's block devices. Resolvers that derive offerings from
+// the offerings they receive carry it through with the price; resolvers that set their own price should add
+// ResolveContext.BlockDeviceMappingsPrice.
 type OfferingResolver interface {
 	ResolveOfferings(ctx context.Context, it *cloudprovider.InstanceType, offerings cloudprovider.Offerings, instanceTypeInfo ec2types.InstanceTypeInfo, nodeClass NodeClass, allZones sets.Set[string], shiftedZones sets.Set[string], pg *placementgroup.PlacementGroup, rc *ResolveContext) cloudprovider.Offerings
 }
@@ -56,8 +63,71 @@ type OfferingResolver interface {
 // across every instance type and resolver. Passing it explicitly (rather than recomputing it
 // inside each resolver for every instance type) avoids redundant work.
 type ResolveContext struct {
-	ZoneInfo        []v1.ZoneInfo    // NodeClass zonal information
-	cacheKeyBuilder *cacheKeyBuilder // pre-computed NodeClass cache key components
+	ZoneInfo          []v1.ZoneInfo    // NodeClass zonal information
+	cacheKeyBuilder   *cacheKeyBuilder // pre-computed NodeClass cache key components
+	blockDevicePricer *blockDevicePricer
+}
+
+// BlockDeviceMappingsPrice returns the hourly price of the EBS volumes attached to an instance of the given type when
+// launched with the NodeClass. It's added to each offering's price so that offerings reflect the total cost of a node.
+func (rc *ResolveContext) BlockDeviceMappingsPrice(info ec2types.InstanceTypeInfo) float64 {
+	return rc.blockDevicePricer.price(info)
+}
+
+// BlockDeviceMappingsResolver returns the block device mappings attached to an instance of the given type when launched
+// with the NodeClass. Mappings are resolved per instance type so that they can vary by instance type (e.g. volume sizes
+// derived from the instance type's resources).
+type BlockDeviceMappingsResolver func(nodeClass NodeClass, info ec2types.InstanceTypeInfo) []*v1.BlockDeviceMapping
+
+// DefaultBlockDeviceMappings returns the NodeClass' block device mappings, falling back to the AMI family's defaults
+// when the NodeClass doesn't specify any. These are the same for every instance type.
+func DefaultBlockDeviceMappings(nodeClass NodeClass, _ ec2types.InstanceTypeInfo) []*v1.BlockDeviceMapping {
+	if blockDeviceMappings := nodeClass.BlockDeviceMappings(); len(blockDeviceMappings) != 0 {
+		return blockDeviceMappings
+	}
+	return amifamily.GetAMIFamily(nodeClass.AMIFamily(), &amifamily.Options{}).DefaultBlockDeviceMappings()
+}
+
+// blockDevicePricer prices the block devices for each instance type once per InjectOfferings call, since the price is
+// needed by multiple resolvers and for the offering cache key.
+type blockDevicePricer struct {
+	nodeClass       NodeClass
+	pricingProvider pricing.Provider
+	resolve         BlockDeviceMappingsResolver
+
+	mu     sync.Mutex
+	prices map[ec2types.InstanceType]float64
+}
+
+func (b *blockDevicePricer) price(info ec2types.InstanceTypeInfo) float64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if price, ok := b.prices[info.InstanceType]; ok {
+		return price
+	}
+	price := blockDeviceMappingsPrice(b.pricingProvider, b.resolve(b.nodeClass, info))
+	// Instance types without instance type info can't be told apart, so their prices aren't memoized
+	if info.InstanceType != "" {
+		b.prices[info.InstanceType] = price
+	}
+	return price
+}
+
+// blockDeviceMappingsPrice returns the hourly price of the given EBS volumes. Volumes without an explicit type and size
+// (e.g. those defined by a custom AMI's snapshot) or without known pricing aren't priced.
+func blockDeviceMappingsPrice(pricingProvider pricing.Provider, blockDeviceMappings []*v1.BlockDeviceMapping) float64 {
+	var total float64
+	for _, bdm := range blockDeviceMappings {
+		if bdm == nil || bdm.EBS == nil || bdm.EBS.VolumeType == nil || bdm.EBS.VolumeSize == nil {
+			continue
+		}
+		// Volumes are launched with their size rounded up to the nearest GiB
+		sizeGiB := int64(math.Ceil(bdm.EBS.VolumeSize.AsApproximateFloat64() / math.Pow(2, 30)))
+		if price, ok := pricingProvider.EBSVolumePrice(*bdm.EBS.VolumeType, sizeGiB, lo.FromPtr(bdm.EBS.IOPS), lo.FromPtr(bdm.EBS.Throughput)); ok {
+			total += price
+		}
+	}
+	return total
 }
 
 type NodeClass interface {
@@ -66,6 +136,7 @@ type NodeClass interface {
 	ZoneInfo() []v1.ZoneInfo
 	NetworkInterfaces() []*v1.NetworkInterface
 	AMIFamily() string
+	BlockDeviceMappings() []*v1.BlockDeviceMapping
 	PlacementGroupSelector() *v1.PlacementGroupSelector
 	ConnectionTracking() *v1.ConnectionTracking
 	CPUOptions() *v1.CPUOptions
@@ -85,6 +156,7 @@ type DefaultProvider struct {
 	overlayPricesMu                sync.RWMutex
 	overlayPricesExpiry            time.Time
 	resolvers                      []OfferingResolver
+	blockDeviceMappings            BlockDeviceMappingsResolver
 }
 
 func NewDefaultProvider(
@@ -105,6 +177,7 @@ func NewDefaultProvider(
 		cache:                       offeringCache,
 		zonalshiftProvider:          zonalshiftProvider,
 		kubeClient:                  kubeClient,
+		blockDeviceMappings:         DefaultBlockDeviceMappings,
 	}
 	// Register built-in resolvers
 	p.resolvers = []OfferingResolver{
@@ -153,6 +226,12 @@ func (p *DefaultProvider) InjectOfferings(
 	rc := &ResolveContext{
 		ZoneInfo:        zoneInfo,
 		cacheKeyBuilder: newCacheKeyBuilder(nodeClass, zoneInfo, shiftedZones, pg),
+		blockDevicePricer: &blockDevicePricer{
+			nodeClass:       nodeClass,
+			pricingProvider: p.pricingProvider,
+			resolve:         p.blockDeviceMappings,
+			prices:          make(map[ec2types.InstanceType]float64, len(instanceTypes)),
+		},
 	}
 
 	for _, it := range instanceTypes {
