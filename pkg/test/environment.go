@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/karpenter/pkg/controllers/nodeoverlay"
 
 	"github.com/aws/karpenter-provider-aws/pkg/providers/arczonalshift"
+	"github.com/aws/karpenter-provider-aws/pkg/providers/ebspricing"
 
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
 	awscache "github.com/aws/karpenter-provider-aws/pkg/cache"
@@ -107,6 +108,7 @@ type Environment struct {
 	SecurityGroupProvider       *securitygroup.DefaultProvider
 	InstanceProfileProvider     *instanceprofile.DefaultProvider
 	PricingProvider             *pricing.DefaultProvider
+	EBSPricingProvider          *ebspricing.DefaultProvider
 	AMIProvider                 *amifamily.DefaultProvider
 	AMIResolver                 *amifamily.DefaultResolver
 	VersionProvider             *version.DefaultProvider
@@ -156,6 +158,7 @@ func NewEnvironment(ctx context.Context, env *coretest.Environment) *Environment
 
 	// Providers
 	pricingProvider := pricing.NewDefaultProvider(fakePricingAPI, ec2api, fake.DefaultRegion, false)
+	ebsPricingProvider := ebspricing.NewDefaultProvider(fakePricingAPI, fake.DefaultRegion, false)
 	subnetProvider := subnet.NewDefaultProvider(ec2api, subnetCache, availableIPAdressCache)
 	securityGroupProvider := securitygroup.NewDefaultProvider(ec2api, securityGroupCache)
 	versionProvider := version.NewDefaultProvider(env.KubernetesInterface, eksapi)
@@ -183,7 +186,7 @@ func NewEnvironment(ctx context.Context, env *coretest.Environment) *Environment
 	instanceTypesResolver := instancetype.NewDefaultResolver(fake.DefaultRegion, celEnv)
 	capacityReservationProvider := capacityreservation.NewProvider(ec2api, clock, capacityReservationCache, capacityReservationAvailabilityCache)
 	zonalshiftProvider := arczonalshift.NewProvider(arczonalshiftapi, clock, "")
-	instanceTypesProvider = instancetype.NewDefaultProvider(instanceTypeCache, offeringCache, discoveredCapacityCache, ec2api, subnetProvider, pricingProvider, capacityReservationProvider, placementGroupProvider, unavailableOfferingsCache, instanceTypesResolver, zonalshiftProvider, env.Client, celEnv)
+	instanceTypesProvider = instancetype.NewDefaultProvider(instanceTypeCache, offeringCache, discoveredCapacityCache, ec2api, subnetProvider, pricingProvider, ebsPricingProvider, capacityReservationProvider, placementGroupProvider, unavailableOfferingsCache, instanceTypesResolver, zonalshiftProvider, env.Client, celEnv)
 	// Ensure we're able to hydrate instance types before starting any reliant controllers.
 	// Instance type updates are hydrated asynchronously after this by controllers.
 	lo.Must0(instanceTypesProvider.UpdateInstanceTypes(ctx))
@@ -267,6 +270,7 @@ func NewEnvironment(ctx context.Context, env *coretest.Environment) *Environment
 		LaunchTemplateProvider:      launchTemplateProvider,
 		InstanceProfileProvider:     instanceProfileProvider,
 		PricingProvider:             pricingProvider,
+		EBSPricingProvider:          ebsPricingProvider,
 		AMIProvider:                 amiProvider,
 		AMIResolver:                 amiResolver,
 		VersionProvider:             versionProvider,
@@ -286,6 +290,7 @@ func (env *Environment) Reset() {
 	env.ARCZonalShiftAPI.Reset()
 	env.ZonalShiftProvider.Reset()
 	env.PricingProvider.Reset()
+	env.EBSPricingProvider.Reset()
 	env.InstanceTypesProvider.Reset()
 
 	env.AMICache.Flush()

@@ -104,6 +104,7 @@ func main() {
 			op.InstanceProfileProvider,
 			op.InstanceProvider,
 			op.PricingProvider,
+			op.EBSPricingProvider,
 			op.AMIProvider,
 			op.LaunchTemplateProvider,
 			op.VersionProvider,

@@ -61,6 +61,7 @@ import (
 	"github.com/aws/karpenter-provider-aws/pkg/operator/options"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/amifamily"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/capacityreservation"
+	"github.com/aws/karpenter-provider-aws/pkg/providers/ebspricing"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/efa"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/instance"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/instanceprofile"
@@ -95,6 +96,7 @@ type Operator struct {
 	AMIResolver                 amifamily.Resolver
 	LaunchTemplateProvider      launchtemplate.Provider
 	PricingProvider             pricing.Provider
+	EBSPricingProvider          ebspricing.Provider
 	VersionProvider             *version.DefaultProvider
 	InstanceTypesProvider       *instancetype.DefaultProvider
 	InstanceProvider            instance.Provider
@@ -163,6 +165,7 @@ func NewOperator(ctx context.Context, operator *operator.Operator) (context.Cont
 		cfg.Region,
 		false,
 	)
+	ebsPricingProvider := ebspricing.NewDefaultProvider(pricing.NewAPI(cfg), cfg.Region, options.FromContext(ctx).IsolatedVPC)
 	versionProvider := version.NewDefaultProvider(operator.KubernetesInterface, eksapi)
 	// Ensure we're able to hydrate the version before starting any reliant controllers.
 	// Version updates are hydrated asynchronously after this, in the event of a failure
@@ -213,6 +216,7 @@ func NewOperator(ctx context.Context, operator *operator.Operator) (context.Cont
 		ec2api,
 		subnetProvider,
 		pricingProvider,
+		ebsPricingProvider,
 		capacityReservationProvider,
 		placementGroupProvider,
 		unavailableOfferingsCache,
@@ -264,6 +268,7 @@ func NewOperator(ctx context.Context, operator *operator.Operator) (context.Cont
 		VersionProvider:             versionProvider,
 		LaunchTemplateProvider:      launchTemplateProvider,
 		PricingProvider:             pricingProvider,
+		EBSPricingProvider:          ebsPricingProvider,
 		InstanceTypesProvider:       instanceTypeProvider,
 		InstanceProvider:            instanceProvider,
 		InstanceStatusProvider:      instanceStatusProvider,

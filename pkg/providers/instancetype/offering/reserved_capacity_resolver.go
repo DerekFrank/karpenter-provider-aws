@@ -78,7 +78,9 @@ func (r *ReservedCapacityResolver) ResolveOfferings(
 			// while maintaining relative ordering for consolidation. If the pricing details are unavailable for whatever reason,
 			// still succeed to create the offering and leave the price at zero. This will break consolidation, but will allow
 			// users to utilize the instances they're already paying for.
-			price = odPrice / 10_000_000.0
+			// The NodeClass' block devices aren't covered by the reservation, so they're scaled with the instance price to
+			// keep the relative ordering of reserved offerings.
+			price = (odPrice + rc.BlockDeviceMappingsPrice(instanceTypeInfo)) / 10_000_000.0
 		}
 		isZonalShifted := false
 		zonalInfo, zoneFound := lo.Find(zoneInfo, func(i v1.ZoneInfo) bool {

@@ -37,12 +37,14 @@ import (
 	"github.com/aws/karpenter-provider-aws/pkg/controllers/metrics"
 	"github.com/aws/karpenter-provider-aws/pkg/controllers/nodeclass"
 	nodeclasshash "github.com/aws/karpenter-provider-aws/pkg/controllers/nodeclass/hash"
+	controllersebspricing "github.com/aws/karpenter-provider-aws/pkg/controllers/providers/ebspricing"
 	controllersinstancetype "github.com/aws/karpenter-provider-aws/pkg/controllers/providers/instancetype"
 	controllersinstancetypecapacity "github.com/aws/karpenter-provider-aws/pkg/controllers/providers/instancetype/capacity"
 	controllerspricing "github.com/aws/karpenter-provider-aws/pkg/controllers/providers/pricing"
 	ssminvalidation "github.com/aws/karpenter-provider-aws/pkg/controllers/providers/ssm/invalidation"
 	controllersversion "github.com/aws/karpenter-provider-aws/pkg/controllers/providers/version"
 	capacityreservationprovider "github.com/aws/karpenter-provider-aws/pkg/providers/capacityreservation"
+	"github.com/aws/karpenter-provider-aws/pkg/providers/ebspricing"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/instancestatus"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/launchtemplate"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/placementgroup"
@@ -89,6 +91,7 @@ func NewControllers(
 	instanceProfileProvider instanceprofile.Provider,
 	instanceProvider instance.Provider,
 	pricingProvider pricing.Provider,
+	ebsPricingProvider ebspricing.Provider,
 	amiProvider amifamily.Provider,
 	launchTemplateProvider launchtemplate.Provider,
 	versionProvider *version.DefaultProvider,
@@ -107,6 +110,7 @@ func NewControllers(
 		nodeclaimgarbagecollection.NewController(kubeClient, cloudProvider),
 		nodeclaimtagging.NewController(kubeClient, cloudProvider, instanceProvider),
 		controllerspricing.NewController(pricingProvider),
+		controllersebspricing.NewController(ebsPricingProvider),
 		controllersinstancetype.NewController(instanceTypeProvider),
 		controllersinstancetypecapacity.NewController(kubeClient, cloudProvider, instanceTypeProvider),
 		ssminvalidation.NewController(ssmCache, amiProvider),

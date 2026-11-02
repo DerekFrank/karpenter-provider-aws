@@ -24,6 +24,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/arczonalshift"
+	"github.com/aws/karpenter-provider-aws/pkg/providers/ebspricing"
 	"github.com/patrickmn/go-cache"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
@@ -35,9 +36,9 @@ import (
 
 	v1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1"
 	awscache "github.com/aws/karpenter-provider-aws/pkg/cache"
+	kubeletcel "github.com/aws/karpenter-provider-aws/pkg/cel"
 	"github.com/aws/karpenter-provider-aws/pkg/operator/options"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/amifamily"
-	kubeletcel "github.com/aws/karpenter-provider-aws/pkg/cel"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/instancetype"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/pricing"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/subnet"
@@ -72,6 +73,7 @@ func main() {
 			cfg.Region,
 			true,
 		),
+		ebspricing.NewDefaultProvider(pricing.NewAPI(cfg), cfg.Region, true),
 		nil,
 		nil,
 		awscache.NewUnavailableOfferings(),

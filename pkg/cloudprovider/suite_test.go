@@ -48,6 +48,7 @@ import (
 	"github.com/aws/karpenter-provider-aws/pkg/fake"
 	"github.com/aws/karpenter-provider-aws/pkg/operator/options"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/drametadata"
+	"github.com/aws/karpenter-provider-aws/pkg/providers/ebspricing"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/efadra"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/instancestatus"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/nvidiadra"
@@ -1745,10 +1746,12 @@ var _ = Describe("CloudProvider", func() {
 				for _, ov := range v.Overrides {
 					if ov.InstanceType == "m5.large" {
 						foundNonGPULT = true
+						// Fleet priorities are the offering price: m5.large's on-demand price plus its default 20Gi gp3 root volume
+						priority := lo.ToPtr(0.096 + 20*0.08/ebspricing.HoursPerMonth)
 						Expect(v.Overrides).To(ContainElements(
-							ec2types.FleetLaunchTemplateOverridesRequest{SubnetId: aws.String("subnet-test1"), ImageId: ov.ImageId, InstanceType: "m5.large", AvailabilityZone: aws.String("test-zone-1a"), Priority: lo.ToPtr(float64(0.096))},
-							ec2types.FleetLaunchTemplateOverridesRequest{SubnetId: aws.String("subnet-test2"), ImageId: ov.ImageId, InstanceType: "m5.large", AvailabilityZone: aws.String("test-zone-1b"), Priority: lo.ToPtr(float64(0.096))},
-							ec2types.FleetLaunchTemplateOverridesRequest{SubnetId: aws.String("subnet-test3"), ImageId: ov.ImageId, InstanceType: "m5.large", AvailabilityZone: aws.String("test-zone-1c"), Priority: lo.ToPtr(float64(0.096))},
+							ec2types.FleetLaunchTemplateOverridesRequest{SubnetId: aws.String("subnet-test1"), ImageId: ov.ImageId, InstanceType: "m5.large", AvailabilityZone: aws.String("test-zone-1a"), Priority: priority},
+							ec2types.FleetLaunchTemplateOverridesRequest{SubnetId: aws.String("subnet-test2"), ImageId: ov.ImageId, InstanceType: "m5.large", AvailabilityZone: aws.String("test-zone-1b"), Priority: priority},
+							ec2types.FleetLaunchTemplateOverridesRequest{SubnetId: aws.String("subnet-test3"), ImageId: ov.ImageId, InstanceType: "m5.large", AvailabilityZone: aws.String("test-zone-1c"), Priority: priority},
 						))
 					}
 				}
