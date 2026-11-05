@@ -23,7 +23,7 @@ import (
 type NoopProvider interface {
 	IsZonalShifted(context.Context, string) bool
 	UpdateZonalShifts(context.Context) error
-	ShiftedZones() sets.Set[string]
+	ShiftedZones(context.Context) sets.Set[string]
 }
 
 type DefaultNoopProvider struct {
@@ -41,6 +41,6 @@ func (p *DefaultNoopProvider) IsZonalShifted(ctx context.Context, zoneId string)
 	return false
 }
 
-func (p *DefaultNoopProvider) ShiftedZones() sets.Set[string] {
+func (p *DefaultNoopProvider) ShiftedZones(_ context.Context) sets.Set[string] {
 	return sets.New[string]()
 }

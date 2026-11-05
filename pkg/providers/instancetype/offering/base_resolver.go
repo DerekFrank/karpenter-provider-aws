@@ -94,7 +94,7 @@ func (r *BaseResolver) ResolveOfferings(
 			})
 			if zonefound {
 				subnetIDs = zonalInfo.SubnetIDs
-				isZonalShifted = r.ZonalshiftProvider.IsZonalShifted(ctx, zonalInfo.ZoneID)
+				isZonalShifted = shiftedZones.Has(zonalInfo.ZoneID)
 			}
 			for _, capacityType := range it.Requirements.Get(karpv1.CapacityTypeLabelKey).Values() {
 				// Reserved capacity types are constructed separately

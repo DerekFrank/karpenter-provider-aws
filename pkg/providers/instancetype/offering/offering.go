@@ -147,7 +147,7 @@ func (p *DefaultProvider) InjectOfferings(
 		pg, _ = p.placementGroupProvider.Get(ctx, nodeClass)
 	}
 	var its []*cloudprovider.InstanceType
-	shiftedZones := p.zonalshiftProvider.ShiftedZones()
+	shiftedZones := p.zonalshiftProvider.ShiftedZones(ctx)
 
 	zoneInfo := nodeClass.ZoneInfo()
 	rc := &ResolveContext{

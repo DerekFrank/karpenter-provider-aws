@@ -66,7 +66,7 @@ func (c *Controller) Reconcile(ctx context.Context) (reconciler.Result, error) {
 		return reconciler.Result{}, fmt.Errorf("updating zonal shifts: %w", err)
 	}
 
-	currentShiftedZones := c.arczonalshiftProvider.ShiftedZones()
+	currentShiftedZones := c.arczonalshiftProvider.ShiftedZones(ctx)
 	if !currentShiftedZones.Equal(c.previousShiftedZones) {
 		zoneInfosByNodePool, err := c.zoneInfosByNodePool(ctx)
 		if err != nil {
