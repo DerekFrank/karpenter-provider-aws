@@ -24,11 +24,13 @@ pricing() {
 
   for partition in "${PARTITIONS[@]}"; do
     GENERATED_FILE="pkg/providers/pricing/zz_generated.pricing_${partition//-/_}.go"
+    EBS_GENERATED_FILE="pkg/providers/pricing/zz_generated.ebs_pricing_${partition//-/_}.go"
 
-    go run hack/code/prices_gen/main.go --partition "$partition" --output "$GENERATED_FILE"
+    go run hack/code/prices_gen/main.go --partition "$partition" --output "$GENERATED_FILE" --ebs-output "$EBS_GENERATED_FILE"
 
     IGNORE_PATTERN="// generated at"
     checkForUpdates "${GENERATED_FILE}" "${IGNORE_PATTERN}"
+    checkForUpdates "${EBS_GENERATED_FILE}" "${IGNORE_PATTERN}"
   done
 }
 

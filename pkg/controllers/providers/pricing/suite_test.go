@@ -534,4 +534,80 @@ var _ = Describe("Pricing", func() {
 			}
 		})
 	})
+	Context("EBS", func() {
+		It("should return static ebs pricing if the pricing API fails", func() {
+			awsEnv.PricingAPI.GetProductsBehavior.Error.Set(fmt.Errorf("failed"))
+			_ = ExpectSingletonReconcileFailed(ctx, controller)
+			price, ok := awsEnv.PricingProvider.EBSVolumePrice("gp3", 20, 0, 0)
+			Expect(ok).To(BeTrue())
+			Expect(price).To(BeNumerically("~", 20*0.08/pricing.HoursPerMonth, 1e-9))
+		})
+		It("should return static ebs pricing for every generated region", func() {
+			for region, prices := range lo.Assign(pricing.InitialEBSPricesAWS, pricing.InitialEBSPricesUSGov) {
+				provider := pricing.NewDefaultProvider(awsEnv.PricingAPI, awsEnv.EC2API, region, false)
+				for volumeType, rates := range prices {
+					price, ok := provider.EBSVolumePrice(volumeType, 100, 0, 0)
+					Expect(ok).To(BeTrue())
+					Expect(price).To(BeNumerically("~", 100*rates.GBMonth/pricing.HoursPerMonth, 1e-9))
+				}
+			}
+		})
+		It("should not return static ebs pricing in the CN partition", func() {
+			provider := pricing.NewDefaultProvider(awsEnv.PricingAPI, awsEnv.EC2API, "cn-north-1", false)
+			_, ok := provider.EBSVolumePrice("gp3", 20, 0, 0)
+			Expect(ok).To(BeFalse())
+		})
+		It("should not return pricing for unknown volume types", func() {
+			_, ok := awsEnv.PricingProvider.EBSVolumePrice("gp9", 20, 0, 0)
+			Expect(ok).To(BeFalse())
+		})
+		It("should update ebs pricing with response from the pricing API", func() {
+			awsEnv.PricingAPI.GetProductsBehavior.Output.Set(&awspricing.GetProductsOutput{
+				PriceList: []string{
+					fake.NewOnDemandPrice("c98.large", 1.20),
+					// usage types outside of us-east-1 are prefixed with the region
+					fake.NewEBSPrice("gp3", "USW2-EBS:VolumeUsage.gp3", "GB-Mo", 1.0),
+					fake.NewEBSPrice("gp3", "USW2-EBS:VolumeP-IOPS.gp3", "IOPS-Mo", 0.01),
+					// gp3 throughput is priced per GiBps-month
+					fake.NewEBSPrice("gp3", "USW2-EBS:VolumeP-Throughput.gp3", "GiBps-mo", 1024),
+					fake.NewEBSPrice("io2", "EBS:VolumeUsage.io2", "GB-month", 2.0),
+					fake.NewEBSPrice("io2", "EBS:VolumeP-IOPS.io2", "IOPS-Mo", 0.1),
+					fake.NewEBSPrice("io2", "EBS:VolumeP-IOPS.io2.tier2", "IOPS-Mo", 0.01),
+					fake.NewEBSPrice("io2", "EBS:VolumeP-IOPS.io2.tier3", "IOPS-Mo", 0.001),
+					// snapshots aren't volume pricing and should be ignored
+					fake.NewEBSPrice("gp3", "EBS:SnapshotUsage", "GB-Mo", 100),
+				},
+			})
+			Expect(awsEnv.PricingProvider.UpdateOnDemandPricing(ctx)).To(Succeed())
+
+			// IOPS and throughput within gp3's included baseline aren't charged
+			price, ok := awsEnv.PricingProvider.EBSVolumePrice("gp3", 10, 3000, 125)
+			Expect(ok).To(BeTrue())
+			Expect(price).To(BeNumerically("~", 10*1.0/pricing.HoursPerMonth, 1e-9))
+
+			price, ok = awsEnv.PricingProvider.EBSVolumePrice("gp3", 10, 4000, 225)
+			Expect(ok).To(BeTrue())
+			Expect(price).To(BeNumerically("~", (10*1.0+1000*0.01+100*1.0)/pricing.HoursPerMonth, 1e-9))
+
+			price, ok = awsEnv.PricingProvider.EBSVolumePrice("io2", 10, 70000, 0)
+			Expect(ok).To(BeTrue())
+			Expect(price).To(BeNumerically("~", (10*2.0+32000*0.1+32000*0.01+6000*0.001)/pricing.HoursPerMonth, 1e-9))
+
+			// volume types missing from the response keep their static pricing
+			price, ok = awsEnv.PricingProvider.EBSVolumePrice("gp2", 10, 0, 0)
+			Expect(ok).To(BeTrue())
+			Expect(price).To(BeNumerically("~", 10*0.1/pricing.HoursPerMonth, 1e-9))
+		})
+		It("should maintain static ebs pricing when the pricing API returns no ebs data", func() {
+			awsEnv.PricingAPI.GetProductsBehavior.Output.Set(&awspricing.GetProductsOutput{
+				PriceList: []string{
+					fake.NewOnDemandPrice("c98.large", 1.20),
+				},
+			})
+			Expect(awsEnv.PricingProvider.UpdateOnDemandPricing(ctx)).To(Succeed())
+			price, ok := awsEnv.PricingProvider.EBSVolumePrice("gp3", 20, 0, 0)
+			Expect(ok).To(BeTrue())
+			Expect(price).To(BeNumerically("~", 20*0.08/pricing.HoursPerMonth, 1e-9))
+		})
+	})
 })

@@ -17,6 +17,7 @@ package offering
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -77,7 +78,8 @@ func (r *BaseResolver) ResolveOfferings(
 		lastSeqNum = 0
 	}
 	seqNum := r.UnavailableOfferings.SeqNum(ec2types.InstanceType(it.Name))
-	cacheKey := keyBuilder.cacheKeyFromInstanceType(it)
+	blockDeviceMappingsPrice := rc.BlockDeviceMappingsPrice(instanceTypeInfo)
+	cacheKey := keyBuilder.cacheKeyFromInstanceType(it, blockDeviceMappingsPrice)
 	if ofs, ok := r.Cache.Get(cacheKey); ok && lastSeqNum == seqNum {
 		offerings = append(offerings, ofs.([]*cloudprovider.Offering)...)
 	} else {
@@ -120,6 +122,11 @@ func (r *BaseResolver) ResolveOfferings(
 					price, hasPrice = r.PricingProvider.SpotPrice(ec2types.InstanceType(it.Name), zone)
 				default:
 					panic(fmt.Sprintf("invalid capacity type %q in requirements for instance type %q", capacityType, it.Name))
+				}
+				// Overlay prices below are the user's price for the whole node, so attached volumes are only added to the
+				// instance price from the pricing provider
+				if hasPrice {
+					price += blockDeviceMappingsPrice
 				}
 				if !hasPrice {
 					if overlayPrice, ok := r.GetOverlayPrice(ctx, it.Name); ok {
@@ -222,7 +229,9 @@ func newCacheKeyBuilder(nodeClass NodeClass, zoneInfo []v1.ZoneInfo, shiftedZone
 	return b
 }
 
-func (b *cacheKeyBuilder) cacheKeyFromInstanceType(it *cloudprovider.InstanceType) string {
+// cacheKeyFromInstanceType returns the offering cache key for the instance type. Offering prices include the price of
+// the instance type's block devices, which can vary by instance type, so it's part of the key.
+func (b *cacheKeyBuilder) cacheKeyFromInstanceType(it *cloudprovider.InstanceType, blockDeviceMappingsPrice float64) string {
 	zonesHash, _ := hashstructure.Hash(
 		it.Requirements.Get(corev1.LabelTopologyZone).Values(),
 		hashstructure.FormatV2,
@@ -242,7 +251,7 @@ func (b *cacheKeyBuilder) cacheKeyFromInstanceType(it *cloudprovider.InstanceTyp
 			&hashstructure.HashOptions{SlicesAsSets: true},
 		)
 	}
-	return fmt.Sprintf("%s-%016x-%016x-%s", it.Name, zonesHash, capacityTypesHash, b.baseSuffix)
+	return fmt.Sprintf("%s-%016x-%016x-%016x-%s", it.Name, zonesHash, capacityTypesHash, math.Float64bits(blockDeviceMappingsPrice), b.baseSuffix)
 }
 
 func capacityTypesKeyFor(capacityTypes []string) (capacityTypesKey, bool) {

@@ -45,6 +45,8 @@ type Provider interface {
 	InstanceTypes() []ec2types.InstanceType
 	OnDemandPrice(ec2types.InstanceType) (float64, bool)
 	SpotPrice(ec2types.InstanceType, string) (float64, bool)
+	// EBSVolumePrice returns the hourly price of an EBS volume given its type, size (GiB), IOPS, and throughput (MiB/s)
+	EBSVolumePrice(volumeType string, sizeGiB int64, iops int64, throughput int64) (float64, bool)
 	UpdateOnDemandPricing(context.Context) error
 	UpdateSpotPricing(context.Context) error
 }
@@ -78,6 +80,9 @@ type DefaultProvider struct {
 	muSpot             sync.RWMutex
 	spotPrices         map[ec2types.InstanceType]zonal
 	spotPricingUpdated bool
+
+	muEBS     sync.RWMutex
+	ebsPrices map[string]EBSPrice
 }
 
 // zonalPricing is used to capture the per-zone price
@@ -186,7 +191,7 @@ func (p *DefaultProvider) UpdateOnDemandPricing(ctx context.Context) error {
 	// standard on-demand instances
 	var wg sync.WaitGroup
 	var onDemandPrices, onDemandMetalPrices map[ec2types.InstanceType]float64
-	var onDemandErr, onDemandMetalErr error
+	var onDemandErr, onDemandMetalErr, ebsErr error
 
 	// if we are in isolated vpc, skip updating on demand pricing
 	// as pricing api may not be available
@@ -236,6 +241,11 @@ func (p *DefaultProvider) UpdateOnDemandPricing(ctx context.Context) error {
 			})
 	})
 
+	// EBS volume pricing, used to price the block devices attached to each instance
+	wg.Go(func() {
+		ebsErr = p.updateEBSPricing(ctx)
+	})
+
 	wg.Wait()
 
 	err := multierr.Append(onDemandErr, onDemandMetalErr)
@@ -252,7 +262,8 @@ func (p *DefaultProvider) UpdateOnDemandPricing(ctx context.Context) error {
 	if p.cm.HasChanged("on-demand-prices", p.onDemandPrices) {
 		log.FromContext(ctx).WithValues("instance-type-count", len(p.onDemandPrices)).V(1).Info("updated on-demand pricing")
 	}
-	return nil
+	// EBS pricing failures don't prevent instance pricing from being updated
+	return ebsErr
 }
 
 func (p *DefaultProvider) fetchOnDemandPricing(ctx context.Context, additionalFilters ...pricingtypes.Filter) (map[ec2types.InstanceType]float64, error) {
@@ -461,4 +472,8 @@ func (p *DefaultProvider) Reset() {
 	// default our spot pricing to the same as the on-demand pricing until a price update
 	p.spotPrices = populateInitialSpotPricing(staticPricing)
 	p.spotPricingUpdated = false
+
+	p.muEBS.Lock()
+	defer p.muEBS.Unlock()
+	p.ebsPrices = staticEBSPricing(p.region)
 }
