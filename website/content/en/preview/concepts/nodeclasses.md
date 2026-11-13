@@ -1225,6 +1225,8 @@ For high volume short-lived, stateless UDP transactions it may be preferable to 
 
 The `blockDeviceMappings` field in an `EC2NodeClass` can be used to control the [Elastic Block Storage (EBS) volumes](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/block-device-mapping-concepts.html#instance-block-device-mapping) that Karpenter attaches to provisioned nodes. Karpenter uses default block device mappings for the AMIFamily specified. For example, the `Bottlerocket` AMI Family defaults with two block device mappings, one for Bottlerocket's control volume and the other for container resources such as images and logs.
 
+Karpenter includes the cost of these EBS volumes (storage, plus any IOPS and throughput provisioned above the volume type's included baseline) in the price of every on-demand and spot offering for the `EC2NodeClass`, so that price comparisons during provisioning and consolidation reflect the total cost of a node. Volumes without a `volumeType` and `volumeSize`, such as those defined only by a snapshot or by a custom AMI, aren't priced.
+
 ```yaml
 spec:
   blockDeviceMappings:

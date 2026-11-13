@@ -30,6 +30,7 @@ import (
 	kubeletcel "github.com/aws/karpenter-provider-aws/pkg/cel"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/amifamily"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/capacityreservation"
+	"github.com/aws/karpenter-provider-aws/pkg/providers/ebspricing"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/instancetype/compatibility"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/instancetype/offering"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/placementgroup"
@@ -130,6 +131,7 @@ func NewDefaultProvider(
 	ec2api sdk.EC2API,
 	subnetProvider subnet.Provider,
 	pricingProvider pricing.Provider,
+	ebsPricingProvider ebspricing.Provider,
 	capacityReservationProvider capacityreservation.Provider,
 	placementGroupProvider placementgroup.Provider,
 	unavailableOfferingsCache *awscache.UnavailableOfferings,
@@ -152,6 +154,7 @@ func NewDefaultProvider(
 		celEnv:                  celEnv,
 		offeringProvider: offering.NewDefaultProvider(
 			pricingProvider,
+			ebsPricingProvider,
 			capacityReservationProvider,
 			placementGroupProvider,
 			unavailableOfferingsCache,
@@ -161,7 +164,30 @@ func NewDefaultProvider(
 			additionalResolvers...,
 		),
 	}
+	p.offeringProvider.SetBlockDeviceMappingsResolver(p.resolveBlockDeviceMappings)
 	return p
+}
+
+// resolveBlockDeviceMappings returns the block device mappings an instance of the given type is launched with: the
+// NodeClass' mappings with volumeSize expressions evaluated for the instance type, or the AMI family's defaults when the
+// NodeClass doesn't specify any. Expressions are evaluated with the same variables as instance type resolution.
+func (p *DefaultProvider) resolveBlockDeviceMappings(ctx context.Context, nodeClass offering.NodeClass, info ec2types.InstanceTypeInfo) ([]*v1.BlockDeviceMapping, error) {
+	amiFamily := amifamily.GetAMIFamily(nodeClass.AMIFamily(), &amifamily.Options{})
+	blockDeviceMappings := nodeClass.BlockDeviceMappings()
+	if len(blockDeviceMappings) == 0 {
+		return amiFamily.DefaultBlockDeviceMappings(), nil
+	}
+	return amifamily.ResolveBlockDeviceMappings(ctx, p.celEnv, blockDeviceMappings, func() (kubeletcel.InstanceTypeVars, error) {
+		parsed, err := v1.ParseKubeletConfig(nodeClass.KubeletConfiguration())
+		if err != nil {
+			return kubeletcel.InstanceTypeVars{}, err
+		}
+		maxPods, err := resolveMaxPods(ctx, p.celEnv, info, parsed.MaxPods, amiFamily, parsed.PodsPerCore, nodeClass.NetworkInterfaces())
+		if err != nil {
+			return kubeletcel.InstanceTypeVars{}, err
+		}
+		return buildCELVars(ctx, info, amiFamily, maxPods, parsed.PodsPerCore, nodeClass.NetworkInterfaces()), nil
+	})
 }
 
 //nolint:gocyclo
